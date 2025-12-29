@@ -586,3 +586,6 @@ For more information, visit <https://nautilustrader.io>.
 
 ![nautechsystems](https://github.com/nautechsystems/nautilus_trader/raw/develop/assets/ns-logo.png "nautechsystems")
 <img src="https://github.com/nautechsystems/nautilus_trader/raw/develop/assets/ferris.png" width="128">
+
+# rust编译
+cargo build --features streaming
