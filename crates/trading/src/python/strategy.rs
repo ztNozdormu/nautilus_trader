@@ -752,11 +752,13 @@ impl PyStrategy {
         unsafe { &mut *self.inner.get() }
     }
 
-    /// 公共安全接口，返回可变引用
-    /// 仍然是 UnsafeCell 内部操作，但方法名明确，方便 Adapter 使用
     /// 仅在调用者保证单线程可变访问时安全
-    pub fn inner_mut_pub(&self) -> &mut PyStrategyInner {
-        self.inner_mut()
+    #[inline]
+    pub fn into_inner(self) -> PyStrategyInner {
+        Rc::try_unwrap(self.inner)
+            .ok()
+            .map(|cell| unsafe { cell.into_inner() })
+            .expect("PyStrategy must have only one owner")
     }
 }
 
