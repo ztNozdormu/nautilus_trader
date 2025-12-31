@@ -79,6 +79,7 @@ This release adds support for Python 3.14 with the following limitations:
 - Fixed race condition in InstrumentProvider causing duplicate instrument initialization in shared providers
 - Fixed portfolio statistics various bugs and edge cases
 - Fixed SyntheticInstrument formula error during parsing with hyphened InstrumentId (#3257), thanks @Javdu10
+- Fixed balance recalculation to use raw fixed-point (#3356), thanks @kirill-gr1
 - Fixed matching engine GTD order expiry key mismatch (#3272), thanks for reporting @linimin
 - Fixed matching engine order modification for partial fills
 - Fixed matching engine L2/L3 partial fill quantity calculation on subsequent book updates
@@ -130,6 +131,7 @@ This release adds support for Python 3.14 with the following limitations:
 - Fixed Polymarket `match_time` timestamp parsing (#3273), thanks for reporting @santivazq
 - Fixed Polymarket timestamp conversions (#3291, #3292), thanks for reporting @santivazq
 - Fixed Polymarket fill reports for cross-asset matches (#3345), thanks for reporting @santivazq
+- Fixed Polymarket order side for cross-asset matches (#3357), thanks for reporting @santivazq
 - Fixed Tardis book snapshot to deltas CLEAR prepending
 - Fixed Tardis CSV parsing for mid-day snapshots
 
@@ -203,6 +205,7 @@ This release adds support for Python 3.14 with the following limitations:
 - Standardized dYdX client integration tests (#3193), thanks @nicolad
 - Standardized dYdX per adapter guide conventions (#3267), thanks @nicolad
 - Changed Interactive Brokers default quote tick subscription to batch quotes (#3196), thanks @faysou
+- Changed spread quote aggregation to opt-in (#3355), thanks @faysou
 - Removed redundant debug code for reconcile execution (#3344), thanks @TaiShanQ
 - Refined timer name validation to accept non-ASCII characters (common for foreign currencies) (#3154), thanks for reporting @woung717
 - Refined spread support (#3284), thanks @faysou
@@ -245,7 +248,7 @@ This release adds support for Python 3.14 with the following limitations:
 - Upgraded `msgspec` to 0.20.0
 - Upgraded `pyo3` crate to v0.27.2
 - Upgraded `pyo3-async-runtimes` crate to v0.27.0
-- Upgraded `redis` crate to v1.0.1
+- Upgraded `redis` crate to v1.0.2
 
 ### Documentation Updates
 - Added Polymarket historical data loading docs

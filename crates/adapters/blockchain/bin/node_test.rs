@@ -36,23 +36,22 @@ use nautilus_live::node::LiveNode;
 use nautilus_model::{
     defi::{Block, Blockchain, DexType, Pool, PoolLiquidityUpdate, PoolSwap, chain::chains},
     identifiers::{ClientId, InstrumentId, TraderId},
+    stubs::TestDefault,
 };
 
 // Requires capnp installed on the machine
 // Run with `cargo run -p nautilus-blockchain --bin node_test --features hypersync`
 // To see additional tracing logs `export RUST_LOG=debug,h2=off`
 
-// ================================================================================================
 // IMPORTANT: The actor definitions below are EXAMPLE CODE for demonstration purposes.
 // They should NOT be moved to the main library as they are specific to this test scenario.
 // If you need production-ready actors, create them in a separate production module.
-// ================================================================================================
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
 
     let environment = Environment::Live;
-    let trader_id = TraderId::default();
+    let trader_id = TraderId::test_default();
     let node_name = "TESTER-001".to_string();
 
     let chain = chains::ARBITRUM.clone();

@@ -42,7 +42,7 @@
 //! as query parameters. Order submission and trading operations use gRPC with blockchain
 //! transaction signing, not REST API.
 //!
-//! # Official documentation
+//! # Official Documentation
 //!
 //! | Endpoint                             | Reference                                              |
 //! |--------------------------------------|--------------------------------------------------------|
@@ -392,10 +392,6 @@ impl DydxRawHttpClient {
         })
     }
 
-    // ========================================================================
-    // Markets Endpoints
-    // ========================================================================
-
     /// Fetch all perpetual markets from dYdX.
     ///
     /// # Errors
@@ -464,10 +460,6 @@ impl DydxRawHttpClient {
         Ok(instruments)
     }
 
-    // ========================================================================
-    // Account Endpoints
-    // ========================================================================
-
     /// Fetch orderbook for a specific market.
     ///
     /// # Errors
@@ -527,10 +519,6 @@ impl DydxRawHttpClient {
         self.send_request(Method::GET, &endpoint, Some(&query))
             .await
     }
-
-    // ========================================================================
-    // Account Endpoints
-    // ========================================================================
 
     /// Fetch subaccount information.
     ///
@@ -622,10 +610,6 @@ impl DydxRawHttpClient {
         let query = query_parts.join("&");
         self.send_request(Method::GET, endpoint, Some(&query)).await
     }
-
-    // ========================================================================
-    // Utility Endpoints
-    // ========================================================================
 
     /// Get current server time.
     ///

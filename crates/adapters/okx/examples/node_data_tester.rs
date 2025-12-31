@@ -15,11 +15,14 @@
 
 //! Example demonstrating live data testing with the OKX adapter.
 //!
-//! Run with: `cargo run --example okx-data-tester --package nautilus-okx`
+//! Run with: `cargo run --example okx-data-tester --package nautilus-okx --features high-precision`
 
 use nautilus_common::enums::Environment;
 use nautilus_live::node::LiveNode;
-use nautilus_model::identifiers::{ClientId, InstrumentId, TraderId};
+use nautilus_model::{
+    identifiers::{ClientId, InstrumentId, TraderId},
+    stubs::TestDefault,
+};
 use nautilus_okx::{
     common::enums::OKXInstrumentType, config::OKXDataClientConfig, factories::OKXDataClientFactory,
 };
@@ -30,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
 
     let environment = Environment::Live;
-    let trader_id = TraderId::default();
+    let trader_id = TraderId::test_default();
     let node_name = "OKX-TESTER-001".to_string();
     let instrument_ids = vec![
         InstrumentId::from("BTC-USDT-SWAP.OKX"),

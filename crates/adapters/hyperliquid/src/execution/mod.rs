@@ -32,7 +32,6 @@ use nautilus_common::{
 };
 use nautilus_core::{MUTEX_POISONED, UnixNanos, time::get_atomic_clock_realtime};
 use nautilus_execution::client::{ExecutionClient, base::ExecutionClientCore};
-use nautilus_live::execution::client::LiveExecutionClient;
 use nautilus_model::{
     accounts::AccountAny,
     enums::{OmsType, OrderType},
@@ -554,12 +553,20 @@ impl ExecutionClient for HyperliquidExecutionClient {
         tracing::debug!("Modifying order: {:?}", command);
 
         // Parse venue_order_id as u64
-        let oid: u64 = match command.venue_order_id.as_str().parse() {
+        let venue_order_id = match command.venue_order_id {
+            Some(id) => id,
+            None => {
+                tracing::warn!("Cannot modify order: venue_order_id is None");
+                return Ok(());
+            }
+        };
+
+        let oid: u64 = match venue_order_id.as_str().parse() {
             Ok(id) => id,
             Err(e) => {
                 tracing::warn!(
                     "Failed to parse venue_order_id '{}' as u64: {}",
-                    command.venue_order_id,
+                    venue_order_id,
                     e
                 );
                 return Ok(());
@@ -889,10 +896,7 @@ impl ExecutionClient for HyperliquidExecutionClient {
         tracing::info!(client_id = %self.core.client_id, "Disconnected");
         Ok(())
     }
-}
 
-#[async_trait(?Send)]
-impl LiveExecutionClient for HyperliquidExecutionClient {
     async fn generate_order_status_report(
         &self,
         _cmd: &GenerateOrderStatusReport,

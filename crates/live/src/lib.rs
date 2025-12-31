@@ -33,7 +33,7 @@
 //! NautilusTrader's design, architecture, and implementation philosophy prioritizes software correctness and safety at the
 //! highest level, with the aim of supporting mission-critical, trading system backtesting and live deployment workloads.
 //!
-//! # Feature flags
+//! # Feature Flags
 //!
 //! This crate provides feature flags to control source code inclusion during compilation,
 //! depending on the intended use case, i.e. whether to provide Python bindings
@@ -55,8 +55,8 @@
 #![deny(clippy::missing_panics_doc)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
+pub mod builder;
 pub mod config;
-pub mod data;
 pub mod execution;
 pub mod node;
 pub mod runner;
