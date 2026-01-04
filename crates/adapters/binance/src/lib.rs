@@ -69,3 +69,4 @@ pub mod websocket;
 
 #[cfg(feature = "python")]
 pub mod python;
+mod config;
