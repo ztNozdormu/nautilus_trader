@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -26,7 +26,7 @@
 
 use nautilus_binance::{
     common::{enums::BinanceEnvironment, fixed::mantissa_to_f64},
-    spot::http::{BinanceSpotHttpClient, DepthParams, TradesParams},
+    spot::http::{BinanceSpotHttpClient, DepthParams},
 };
 use tracing_subscriber::EnvFilter;
 
@@ -82,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
     // Test 3: Depth (Order Book)
     tracing::info!("=== Test 3: Depth (BTCUSDT) ===");
     let depth_params = DepthParams::new("BTCUSDT").with_limit(5);
-    match client.depth(&depth_params).await {
+    match client.inner().depth(&depth_params).await {
         Ok(depth) => {
             tracing::info!("Last update ID: {}", depth.last_update_id);
             tracing::info!(
@@ -108,8 +108,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Test 4: Recent Trades
     tracing::info!("=== Test 4: Trades (BTCUSDT) ===");
-    let trades_params = TradesParams::new("BTCUSDT").with_limit(5);
-    match client.trades(&trades_params).await {
+    match client.inner().trades("BTCUSDT", Some(5)).await {
         Ok(trades) => {
             tracing::info!(
                 "Price exponent: {}, Qty exponent: {}",
@@ -121,7 +120,7 @@ async fn main() -> anyhow::Result<()> {
                 let price = mantissa_to_f64(trade.price_mantissa, trades.price_exponent);
                 let qty = mantissa_to_f64(trade.qty_mantissa, trades.qty_exponent);
                 let side = if trade.is_buyer_maker { "SELL" } else { "BUY" };
-                let datetime = chrono::DateTime::from_timestamp_millis(trade.time).map_or_else(
+                let datetime = chrono::DateTime::from_timestamp_micros(trade.time).map_or_else(
                     || "?".to_string(),
                     |dt| dt.format("%H:%M:%S%.3f").to_string(),
                 );
@@ -137,7 +136,7 @@ async fn main() -> anyhow::Result<()> {
     // Test 5: Depth for another symbol (ETHUSDT)
     tracing::info!("=== Test 5: Depth (ETHUSDT) ===");
     let depth_params = DepthParams::new("ETHUSDT").with_limit(3);
-    match client.depth(&depth_params).await {
+    match client.inner().depth(&depth_params).await {
         Ok(depth) => {
             tracing::info!("Last update ID: {}", depth.last_update_id);
             tracing::info!(

@@ -22,7 +22,8 @@ name = "nautilus_binance"
 crate-type = ["rlib", "cdylib"]
 
 [features]
-default = []
+default = ["high-precision"]
+high-precision = ["nautilus-model/high-precision"]
 extension-module = [
   "nautilus-common/extension-module",
   "nautilus-core/extension-module",

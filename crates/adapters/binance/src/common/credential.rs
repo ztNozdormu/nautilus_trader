@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -21,7 +21,7 @@
 
 #![allow(unused_assignments)] // Fields are used in methods; false positive on some toolchains
 
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 use aws_lc_rs::hmac;
 use ed25519_dalek::{Signature, Signer, SigningKey};
@@ -160,7 +160,7 @@ pub enum Ed25519CredentialError {
     InvalidKeyLength,
 }
 
-impl std::fmt::Display for Ed25519CredentialError {
+impl Display for Ed25519CredentialError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidBase64(e) => write!(f, "Invalid base64 encoding: {e}"),

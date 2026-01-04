@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -266,6 +266,9 @@ impl AsyncRunner {
             }
             DataEvent::Response(resp) => {
                 msgbus::send_any(MessagingSwitchboard::data_engine_response(), &resp);
+            }
+            DataEvent::FundingRate(funding_rate) => {
+                msgbus::send_any(MessagingSwitchboard::data_engine_process(), &funding_rate);
             }
             #[cfg(feature = "defi")]
             DataEvent::DeFi(data) => {

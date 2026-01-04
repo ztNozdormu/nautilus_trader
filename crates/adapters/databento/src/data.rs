@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -81,7 +81,7 @@ pub struct DatabentoDataClientConfig {
 
 impl Debug for DatabentoDataClientConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DatabentoDataClientConfig")
+        f.debug_struct(stringify!(DatabentoDataClientConfig))
             .field("credential", &"<redacted>")
             .field("publishers_filepath", &self.publishers_filepath)
             .field("use_exchange_as_venue", &self.use_exchange_as_venue)

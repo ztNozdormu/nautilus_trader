@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -17,6 +17,10 @@
 
 use std::str::FromStr;
 
+pub use nautilus_core::serialization::{
+    deserialize_empty_string_as_none, deserialize_empty_ustr_as_none,
+    deserialize_optional_string_to_u64, deserialize_string_to_u64,
+};
 use nautilus_core::{
     UUID4,
     datetime::{NANOSECONDS_IN_MILLISECOND, millis_to_nanos_unchecked},
@@ -97,38 +101,6 @@ pub fn determine_order_type(okx_ord_type: OKXOrderType, px: &str) -> OrderType {
     }
 }
 
-/// Deserializes an empty string into [`None`].
-///
-/// OKX frequently represents *null* string fields as an empty string (`""`).
-/// When such a payload is mapped onto `Option<String>` the default behaviour
-/// would yield `Some("")`, which is semantically different from the intended
-/// absence of a value. This helper ensures that empty strings are normalised
-/// to `None` during deserialization.
-///
-/// # Errors
-///
-/// Returns an error if the JSON value cannot be deserialised into a string.
-pub fn deserialize_empty_string_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let opt = Option::<String>::deserialize(deserializer)?;
-    Ok(opt.filter(|s| !s.is_empty()))
-}
-
-/// Deserializes an empty [`Ustr`] into [`None`].
-///
-/// # Errors
-///
-/// Returns an error if the JSON value cannot be deserialised into a string.
-pub fn deserialize_empty_ustr_as_none<'de, D>(deserializer: D) -> Result<Option<Ustr>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let opt = Option::<Ustr>::deserialize(deserializer)?;
-    Ok(opt.filter(|s| !s.is_empty()))
-}
-
 /// Deserializes a string into `Option<OKXTargetCurrency>`, treating empty strings as `None`.
 ///
 /// # Errors
@@ -145,40 +117,6 @@ where
         Ok(None)
     } else {
         s.parse().map(Some).map_err(serde::de::Error::custom)
-    }
-}
-
-/// Deserializes a numeric string into a `u64`.
-///
-/// # Errors
-///
-/// Returns an error if the string cannot be parsed into a `u64`.
-pub fn deserialize_string_to_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    if s.is_empty() {
-        Ok(0)
-    } else {
-        s.parse::<u64>().map_err(serde::de::Error::custom)
-    }
-}
-
-/// Deserializes an optional numeric string into `Option<u64>`.
-///
-/// # Errors
-///
-/// Returns an error under the same cases as [`deserialize_string_to_u64`].
-pub fn deserialize_optional_string_to_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s: Option<String> = Option::deserialize(deserializer)?;
-    match s {
-        Some(s) if s.is_empty() => Ok(None),
-        Some(s) => s.parse().map(Some).map_err(serde::de::Error::custom),
-        None => Ok(None),
     }
 }
 

@@ -1,5 +1,5 @@
 # -------------------------------------------------------------------------------------------------
-#  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+#  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 #  https://nautechsystems.io
 #
 #  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -3166,11 +3166,6 @@ cdef class Actor(Component):
         )
         self._requests[used_request_id] = request
         self._pending_requests[used_request_id] = callback
-
-        self._msgbus.subscribe(
-            topic=self._topic_cache.get_deltas_topic(instrument_id, historical=True),
-            handler=self.handle_historical_data,
-        )
 
         self._send_data_req(request)
 

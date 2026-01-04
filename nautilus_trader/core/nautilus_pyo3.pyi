@@ -1,5 +1,5 @@
 # -------------------------------------------------------------------------------------------------
-#  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+#  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 #  https://nautechsystems.io
 #
 #  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -5733,6 +5733,63 @@ class BookImbalanceRatio:
 # Adapters
 ###################################################################################################
 
+# Architect
+
+class ArchitectEnvironment(Enum):
+    SANDBOX = "Sandbox"
+    PRODUCTION = "Production"
+
+class ArchitectMarketDataLevel(Enum):
+    LEVEL_1 = "Level1"
+    LEVEL_2 = "Level2"
+    LEVEL_3 = "Level3"
+
+class ArchitectHttpClient:
+    def __init__(
+        self,
+        base_url: str | None = None,
+        orders_base_url: str | None = None,
+        timeout_secs: int | None = None,
+        max_retries: int | None = None,
+        retry_delay_ms: int | None = None,
+        retry_delay_max_ms: int | None = None,
+        proxy_url: str | None = None,
+    ) -> None: ...
+    @staticmethod
+    def with_credentials(
+        api_key: str,
+        api_secret: str,
+        base_url: str | None = None,
+        orders_base_url: str | None = None,
+        timeout_secs: int | None = None,
+        max_retries: int | None = None,
+        retry_delay_ms: int | None = None,
+        retry_delay_max_ms: int | None = None,
+        proxy_url: str | None = None,
+    ) -> ArchitectHttpClient: ...
+    @property
+    def base_url(self) -> str: ...
+    def cancel_all_requests(self) -> None: ...
+    def set_session_token(self, token: str) -> None: ...
+
+class ArchitectMdWebSocketClient:
+    def __init__(
+        self,
+        url: str,
+        auth_token: str,
+        heartbeat: int | None = None,
+    ) -> None: ...
+    @property
+    def url(self) -> str: ...
+    def is_active(self) -> bool: ...
+    def is_closed(self) -> bool: ...
+    def subscription_count(self) -> int: ...
+    async def connect(self) -> None: ...
+    async def subscribe(self, symbol: str, level: ArchitectMarketDataLevel) -> None: ...
+    async def unsubscribe(self, symbol: str) -> None: ...
+    async def disconnect(self) -> None: ...
+    async def close(self) -> None: ...
+
 # Bybit
 
 BYBIT_NAUTILUS_BROKER_ID: Final[str]
@@ -6945,6 +7002,20 @@ class DeribitWebSocketClient:
         instrument_id: InstrumentId,
         interval: DeribitUpdateInterval | None = None,
     ) -> None: ...
+    async def subscribe_book_grouped(
+        self,
+        instrument_id: InstrumentId,
+        group: str,
+        depth: int,
+        interval: DeribitUpdateInterval | None = None,
+    ) -> None: ...
+    async def unsubscribe_book_grouped(
+        self,
+        instrument_id: InstrumentId,
+        group: str,
+        depth: int,
+        interval: DeribitUpdateInterval | None = None,
+    ) -> None: ...
     async def subscribe_ticker(
         self,
         instrument_id: InstrumentId,
@@ -6960,6 +7031,28 @@ class DeribitWebSocketClient:
     async def unsubscribe_quotes(self, instrument_id: InstrumentId) -> None: ...
     async def subscribe(self, channels: list[str]) -> None: ...
     async def unsubscribe(self, channels: list[str]) -> None: ...
+    async def subscribe_instrument_state(self, kind: str, currency: str) -> None: ...
+    async def unsubscribe_instrument_state(self, kind: str, currency: str) -> None: ...
+    async def subscribe_perpetual_interest_rates(
+        self,
+        instrument_id: InstrumentId,
+        interval: DeribitUpdateInterval | None = None,
+    ) -> None: ...
+    async def unsubscribe_perpetual_interest_rates(
+        self,
+        instrument_id: InstrumentId,
+        interval: DeribitUpdateInterval | None = None,
+    ) -> None: ...
+    async def subscribe_chart(
+        self,
+        instrument_id: InstrumentId,
+        resolution: str,
+    ) -> None: ...
+    async def unsubscribe_chart(
+        self,
+        instrument_id: InstrumentId,
+        resolution: str,
+    ) -> None: ...
 
 def get_deribit_http_base_url(is_testnet: bool) -> str: ...
 def get_deribit_ws_url(is_testnet: bool) -> str: ...
@@ -6987,6 +7080,9 @@ class DeribitUpdateInterval(Enum):
     RAW = "RAW"
     MS100 = "MS100"
     AGG2 = "AGG2"
+
+    @classmethod
+    def from_str(cls, value: str) -> DeribitUpdateInterval: ...
 
 class DeribitWsChannel(Enum):
     TRADES = "TRADES"

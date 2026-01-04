@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -22,6 +22,7 @@ use nautilus_deribit::{
 };
 use nautilus_live::node::LiveNode;
 use nautilus_model::{
+    data::bar::BarType,
     identifiers::{ClientId, InstrumentId, TraderId},
     stubs::TestDefault,
 };
@@ -56,10 +57,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_delay_post_stop_secs(5)
         .build()?;
 
+    // Define bar types for subscriptions (1-minute bars)
+    let bar_types = vec![
+        BarType::from("BTC-PERPETUAL.DERIBIT-1-MINUTE-LAST-EXTERNAL"),
+        BarType::from("ETH-PERPETUAL.DERIBIT-1-MINUTE-LAST-EXTERNAL"),
+    ];
+
     let tester_config = DataTesterConfig::new(client_id, instrument_ids)
-        .with_subscribe_quotes(true)
-        .with_subscribe_trades(true)
-        .with_request_instruments(true);
+        .with_bar_types(bar_types)
+        .with_subscribe_bars(true)
+        .with_log_data(true);
     let tester = DataTester::new(tester_config);
 
     node.add_actor(tester)?;

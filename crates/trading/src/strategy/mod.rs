@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -73,6 +73,14 @@ pub trait Strategy: DataActor {
     /// This method must be implemented by the user's strategy struct, typically
     /// by returning a mutable reference to its `StrategyCore` member.
     fn core_mut(&mut self) -> &mut StrategyCore;
+
+    /// Returns the external order claims for this strategy.
+    ///
+    /// These are instrument IDs whose external orders should be claimed by this strategy
+    /// during reconciliation.
+    fn external_order_claims(&self) -> Option<Vec<InstrumentId>> {
+        None
+    }
 
     /// Submits an order.
     ///

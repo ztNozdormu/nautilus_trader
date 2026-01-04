@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -15,7 +15,7 @@
 
 //! Unified SBE decode error type for Binance adapters.
 
-use std::fmt::{self, Display};
+use std::fmt::Display;
 
 /// Maximum allowed group size to prevent DoS from malformed data.
 pub const MAX_GROUP_SIZE: u32 = 10_000;
@@ -65,7 +65,7 @@ pub enum SbeDecodeError {
 }
 
 impl Display for SbeDecodeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BufferTooShort { expected, actual } => {
                 write!(

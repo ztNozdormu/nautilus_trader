@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -103,14 +103,6 @@ impl Debug for BinanceFuturesWebSocketClient {
 
 impl BinanceFuturesWebSocketClient {
     /// Creates a new [`BinanceFuturesWebSocketClient`] instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `product_type` - Must be `UsdM` or `CoinM`.
-    /// * `environment` - Mainnet or testnet.
-    /// * `api_key` - Optional API key for user data streams.
-    /// * `api_secret` - Optional API secret for signing.
-    /// * `heartbeat` - Optional heartbeat interval in milliseconds.
     ///
     /// # Errors
     ///

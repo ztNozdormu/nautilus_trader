@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -57,7 +57,7 @@ pub struct BinanceTrade {
     pub qty_mantissa: i64,
     /// Quote quantity mantissa (price * qty).
     pub quote_qty_mantissa: i64,
-    /// Trade timestamp in milliseconds.
+    /// Trade timestamp in microseconds (SBE precision).
     pub time: i64,
     /// Whether the buyer is the maker.
     pub is_buyer_maker: bool,
@@ -268,6 +268,54 @@ pub struct BinanceAccountInfo {
     pub balances: Vec<BinanceBalance>,
 }
 
+/// Symbol information from SBE exchange info response.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinanceSymbolSbe {
+    /// Symbol name (e.g., "BTCUSDT").
+    pub symbol: String,
+    /// Base asset (e.g., "BTC").
+    pub base_asset: String,
+    /// Quote asset (e.g., "USDT").
+    pub quote_asset: String,
+    /// Base asset precision.
+    pub base_asset_precision: u8,
+    /// Quote asset precision.
+    pub quote_asset_precision: u8,
+    /// Symbol status.
+    pub status: u8,
+    /// Order types bitset.
+    pub order_types: u16,
+    /// Whether iceberg orders are allowed.
+    pub iceberg_allowed: bool,
+    /// Whether OCO orders are allowed.
+    pub oco_allowed: bool,
+    /// Whether OTO orders are allowed.
+    pub oto_allowed: bool,
+    /// Whether quote order quantity market orders are allowed.
+    pub quote_order_qty_market_allowed: bool,
+    /// Whether trailing stop is allowed.
+    pub allow_trailing_stop: bool,
+    /// Whether cancel-replace is allowed.
+    pub cancel_replace_allowed: bool,
+    /// Whether amend is allowed.
+    pub amend_allowed: bool,
+    /// Whether spot trading is allowed.
+    pub is_spot_trading_allowed: bool,
+    /// Whether margin trading is allowed.
+    pub is_margin_trading_allowed: bool,
+    /// Symbol filters (JSON embedded in SBE).
+    pub filters: Vec<serde_json::Value>,
+    /// Permission sets.
+    pub permissions: Vec<Vec<String>>,
+}
+
+/// Exchange information from SBE response.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinanceExchangeInfoSbe {
+    /// List of symbols.
+    pub symbols: Vec<BinanceSymbolSbe>,
+}
+
 /// Account trade history entry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinanceAccountTrade {
@@ -303,4 +351,42 @@ pub struct BinanceAccountTrade {
     pub symbol: String,
     /// Commission asset.
     pub commission_asset: String,
+}
+
+/// Kline (candlestick) data response.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinanceKlines {
+    /// Price exponent for all klines.
+    pub price_exponent: i8,
+    /// Quantity exponent for all klines.
+    pub qty_exponent: i8,
+    /// List of klines.
+    pub klines: Vec<BinanceKline>,
+}
+
+/// A single kline (candlestick) from Binance.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinanceKline {
+    /// Kline open time in milliseconds.
+    pub open_time: i64,
+    /// Open price mantissa.
+    pub open_price: i64,
+    /// High price mantissa.
+    pub high_price: i64,
+    /// Low price mantissa.
+    pub low_price: i64,
+    /// Close price mantissa.
+    pub close_price: i64,
+    /// Volume (base asset) as 128-bit bytes.
+    pub volume: [u8; 16],
+    /// Kline close time in milliseconds.
+    pub close_time: i64,
+    /// Quote volume as 128-bit bytes.
+    pub quote_volume: [u8; 16],
+    /// Number of trades.
+    pub num_trades: i64,
+    /// Taker buy base volume as 128-bit bytes.
+    pub taker_buy_base_volume: [u8; 16],
+    /// Taker buy quote volume as 128-bit bytes.
+    pub taker_buy_quote_volume: [u8; 16],
 }

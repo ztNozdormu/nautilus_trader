@@ -1,5 +1,5 @@
 # -------------------------------------------------------------------------------------------------
-#  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+#  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 #  https://nautechsystems.io
 #
 #  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -2540,13 +2540,16 @@ cdef class SimulatedExchange:
         self.modules = []
         for module in modules:
             Condition.not_in(module, self.modules, "module", "modules")
-            module.register_venue(self)
             module.register_base(
                 portfolio=portfolio,
                 msgbus=msgbus,
                 cache=cache,
                 clock=clock,
             )
+            # The OptionExerciseModule subscribes to position events in the `register_venue` method.
+            # The msgbus needs to be available to subscribe to the events.
+            # Thus, `register_base` is called before `register_venue`.
+            module.register_venue(self)
             self.modules.append(module)
             self._log.info(f"Loaded {module}")
 

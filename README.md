@@ -121,6 +121,8 @@ The following integrations are currently supported; see [docs/integrations/](htt
 
 | Name                                                                         | ID                    | Type                    | Status                                                  | Docs                                        |
 | :--------------------------------------------------------------------------- | :-------------------- | :---------------------- | :------------------------------------------------------ | :------------------------------------------ |
+| [AX Exchange](https://architect.exchange)                                    | `AX`                  | Perpetuals Exchange     | ![status](https://img.shields.io/badge/building-orange) | [Guide](docs/integrations/architect.md)     |
+| [Architect](https://architect.co)                                            | `ARCHITECT`           | Brokerage (multi-venue) | ![status](https://img.shields.io/badge/building-orange) | [Guide](docs/integrations/architect.md)     |
 | [Betfair](https://betfair.com)                                               | `BETFAIR`             | Sports Betting Exchange | ![status](https://img.shields.io/badge/stable-green)    | [Guide](docs/integrations/betfair.md)       |
 | [Binance](https://binance.com)                                               | `BINANCE`             | Crypto Exchange (CEX)   | ![status](https://img.shields.io/badge/stable-green)    | [Guide](docs/integrations/binance.md)       |
 | [BitMEX](https://www.bitmex.com)                                             | `BITMEX`              | Crypto Exchange (CEX)   | ![status](https://img.shields.io/badge/stable-green)    | [Guide](docs/integrations/bitmex.md)        |
@@ -183,8 +185,12 @@ which differ in their internal bit-width and maximum decimal precision.
 > [!NOTE]
 >
 > By default, the official Python wheels ship in high-precision (128-bit) mode on Linux and macOS.
-> On Windows, only standard-precision (64-bit) is available due to the lack of native 128-bit integer support.
-> For the Rust crates, the default is standard-precision unless you explicitly enable the `high-precision` feature flag.
+> On Windows, only standard-precision (64-bit) Python wheels are available because MSVC's C/C++ frontend
+> does not support `__int128`, preventing the Cython/FFI layer from handling 128-bit integers.
+>
+> For pure Rust crates, high-precision works on all platforms (including Windows) since Rust handles
+> `i128`/`u128` via software emulation. The default is standard-precision unless you explicitly enable
+> the `high-precision` feature flag.
 
 See the [Installation Guide](https://nautilustrader.io/docs/latest/getting_started/installation) for further details.
 
@@ -583,7 +589,7 @@ NautilusTrader™ is developed and maintained by Nautech Systems, a technology
 company specializing in the development of high-performance trading systems.
 For more information, visit <https://nautilustrader.io>.
 
-© 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+© 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 
 ![nautechsystems](https://github.com/nautechsystems/nautilus_trader/raw/develop/assets/ns-logo.png "nautechsystems")
 <img src="https://github.com/nautechsystems/nautilus_trader/raw/develop/assets/ferris.png" width="128">

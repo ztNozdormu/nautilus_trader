@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -15,7 +15,9 @@
 
 //! Example demonstrating live data testing with the OKX adapter.
 //!
-//! Run with: `cargo run --example okx-data-tester --package nautilus-okx --features high-precision`
+//! Run with: `cargo run --example okx-data-tester --package nautilus-okx`
+
+use std::num::NonZeroUsize;
 
 use nautilus_common::enums::Environment;
 use nautilus_live::node::LiveNode;
@@ -37,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let node_name = "OKX-TESTER-001".to_string();
     let instrument_ids = vec![
         InstrumentId::from("BTC-USDT-SWAP.OKX"),
-        InstrumentId::from("ETH-USDT-SWAP.OKX"),
+        // InstrumentId::from("ETH-USDT-SWAP.OKX"),
     ];
 
     let okx_config = OKXDataClientConfig {
@@ -54,12 +56,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut node = LiveNode::builder(trader_id, environment)?
         .with_name(node_name)
+        .with_delay_post_stop_secs(2)
         .add_data_client(None, Box::new(client_factory), Box::new(okx_config))?
         .build()?;
 
     let tester_config = DataTesterConfig::new(client_id, instrument_ids)
         .with_subscribe_book_deltas(true) // TODO: Should be implicit with subscribe at interval
-        .with_subscribe_book_at_interval(true);
+        .with_subscribe_book_at_interval(true)
+        .with_book_interval_ms(NonZeroUsize::new(10).unwrap());
     let tester = DataTester::new(tester_config);
 
     node.add_actor(tester)?;

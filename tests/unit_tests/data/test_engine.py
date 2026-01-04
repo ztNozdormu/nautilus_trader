@@ -1,5 +1,5 @@
 # -------------------------------------------------------------------------------------------------
-#  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+#  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 #  https://nautechsystems.io
 #
 #  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -797,30 +797,6 @@ class TestDataEngine:
         assert handler1 == [ETHUSDT_BINANCE]
         assert handler2 == [ETHUSDT_BINANCE]
 
-    def test_execute_subscribe_order_book_snapshots_then_adds_handler(self):
-        # Arrange
-        self.data_engine.register_client(self.binance_client)
-        self.binance_client.start()
-
-        subscribe = SubscribeOrderBook(
-            book_data_type=OrderBookDelta,
-            client_id=None,  # Will route to the Binance venue
-            venue=BINANCE,
-            instrument_id=ETHUSDT_BINANCE.id,
-            book_type=2,
-            depth=10,
-            interval_ms=1000,
-            managed=True,
-            command_id=UUID4(),
-            ts_init=self.clock.timestamp_ns(),
-        )
-
-        # Act
-        self.data_engine.execute(subscribe)
-
-        # Assert
-        assert self.data_engine.subscribed_order_book_deltas() == [ETHUSDT_BINANCE.id]
-
     def test_execute_subscribe_order_book_deltas_then_adds_handler(self):
         # Arrange
         self.data_engine.register_client(self.binance_client)
@@ -903,7 +879,7 @@ class TestDataEngine:
         self.data_engine.execute(unsubscribe)
 
         # Assert
-        assert self.data_engine.subscribed_order_book_snapshots() == []
+        assert self.data_engine.subscribed_order_book_depth() == []
         assert self.binance_client.subscribed_order_book_deltas() == []
 
     def test_execute_unsubscribe_order_book_at_interval_then_removes_handler(self):
@@ -926,7 +902,7 @@ class TestDataEngine:
 
         self.data_engine.execute(subscribe)
 
-        assert self.binance_client.subscribed_order_book_snapshots() == []
+        assert self.binance_client.subscribed_order_book_depth() == []
         assert self.binance_client.subscribed_order_book_deltas() == [ETHUSDT_BINANCE.id]
 
         unsubscribe = UnsubscribeOrderBook(
@@ -942,8 +918,8 @@ class TestDataEngine:
         self.data_engine.execute(unsubscribe)
 
         # Assert
-        assert self.data_engine.subscribed_order_book_snapshots() == []
-        assert self.binance_client.subscribed_order_book_snapshots() == []
+        assert self.data_engine.subscribed_order_book_depth() == []
+        assert self.binance_client.subscribed_order_book_depth() == []
         assert self.binance_client.subscribed_order_book_deltas() == []
 
     def test_order_book_snapshots_when_book_not_updated_does_not_send_(self):
@@ -2436,6 +2412,63 @@ class TestDataEngine:
         assert len(handler) == 1
         assert handler[0].data == []  # Data is published to message bus, not in response
         assert instruments_received == [BTCUSDT_BINANCE, ETHUSDT_BINANCE]
+
+    def test_request_option_instrument_with_tick_scheme_sets_tick_scheme_on_instrument(self):
+        # Arrange
+        option_instrument = TestInstrumentProvider.aapl_option()
+        assert option_instrument.tick_scheme_name is None
+
+        # Create mock market data client with the instrument
+        client = MockMarketDataClient(
+            client_id=ClientId("MOCK"),
+            msgbus=self.msgbus,
+            cache=self.cache,
+            clock=self.clock,
+        )
+        client.instrument = option_instrument
+        self.data_engine.register_client(client)
+
+        handler = []
+        instruments_received = []
+
+        # Subscribe to instrument topic to receive the instrument
+        self.msgbus.subscribe(
+            topic=f"data.instrument.{option_instrument.id.venue}.{option_instrument.id.symbol}",
+            handler=instruments_received.append,
+        )
+
+        # Create request with tick_scheme_name in params
+        tick_scheme_name = "FIXED_PRECISION_2"
+        request = RequestInstrument(
+            instrument_id=option_instrument.id,
+            start=None,
+            end=None,
+            client_id=client.id,
+            venue=None,
+            callback=handler.append,
+            request_id=UUID4(),
+            ts_init=self.clock.timestamp_ns(),
+            params={"instrument_properties": {"tick_scheme_name": tick_scheme_name}},
+        )
+
+        # Act
+        self.msgbus.request(endpoint="DataEngine.request", request=request)
+
+        # Assert
+        assert self.data_engine.request_count == 1
+        assert len(instruments_received) == 1
+        instrument_from_cache = self.cache.instrument(option_instrument.id)
+        assert instrument_from_cache is not None
+        assert instrument_from_cache.tick_scheme_name == tick_scheme_name
+        # Verify tick scheme is functional - FIXED_PRECISION_2 rounds to 2 decimal places (0.01 increments)
+        # For value 100.123, next_bid_price should round down to 100.12 (nearest tick below)
+        result = instrument_from_cache.next_bid_price(100.123)
+        assert result is not None
+        assert result == Price.from_str("100.12")
+        # Verify it also works for ask prices
+        ask_result = instrument_from_cache.next_ask_price(100.127)
+        assert ask_result is not None
+        assert ask_result == Price.from_str("100.13")  # Rounds up to nearest tick
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Failing on windows")
     def test_request_instrument_when_catalog_registered(self):
