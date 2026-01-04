@@ -1,6 +1,6 @@
 [project]
 name = "nautilus_trader"
-version = "1.222.0"
+version = "1.223.0"
 description = "A high-performance algorithmic trading platform and event-driven backtester"
 authors = [{ name = "Nautech Systems", email = "info@nautechsystems.io" }]
 classifiers = [
@@ -177,7 +177,7 @@ select = [
   "PT",
   "PYI",
   "Q",
-  # "I",  # Disabled - using isort instead
+  "I", # isort
   "RSE",
   "TID",
   "SIM", # flake8-simplify
@@ -252,8 +252,11 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 force-single-line = true
 lines-after-imports = 2
 split-on-trailing-comma = true
-force-sort-within-sections = true
 known-first-party = ["nautilus_trader"]
+
+[tool.ruff.format]
+# Inherits target-version, line-length, exclude from [tool.ruff]
+docstring-code-format = true
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

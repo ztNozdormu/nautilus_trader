@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -213,6 +213,7 @@ impl OrderMatchingEngine {
         &mut self,
         fills: Vec<(Price, Quantity)>,
         order_side: OrderSide,
+        leaves_qty: Quantity,
     ) -> Vec<(Price, Quantity)> {
         if !self.config.liquidity_consumption {
             return fills;
@@ -225,8 +226,13 @@ impl OrderMatchingEngine {
         };
 
         let mut adjusted_fills = Vec::with_capacity(fills.len());
+        let mut remaining_qty = leaves_qty.raw;
 
         for (price, qty) in fills {
+            if remaining_qty == 0 {
+                break;
+            }
+
             let price_raw = price.raw;
             let book_size_f64 = self.book.get_quantity_for_price(price, order_side);
             let book_size_raw = (book_size_f64 * 10f64.powi(FIXED_PRECISION as i32)) as QuantityRaw;
@@ -245,12 +251,13 @@ impl OrderMatchingEngine {
                 continue;
             }
 
-            let adjusted_qty_raw = min(qty.raw, available);
+            let adjusted_qty_raw = min(min(qty.raw, available), remaining_qty);
             if adjusted_qty_raw == 0 {
                 continue;
             }
 
             *consumed += adjusted_qty_raw;
+            remaining_qty -= adjusted_qty_raw;
 
             let adjusted_qty = Quantity::from_raw(adjusted_qty_raw, qty.precision);
             adjusted_fills.push((price, adjusted_qty));
@@ -1074,7 +1081,7 @@ impl OrderMatchingEngine {
                 command.instrument_id,
                 command.client_order_id,
                 Ustr::from(format!("Order {} not found", command.client_order_id).as_str()),
-                Some(command.venue_order_id),
+                command.venue_order_id,
                 Some(account_id),
             );
         }
@@ -1697,11 +1704,19 @@ impl OrderMatchingEngine {
     fn determine_limit_price_and_volume(&mut self, order: &OrderAny) -> Vec<(Price, Quantity)> {
         match order.price() {
             Some(order_price) => {
-                // construct book order with price as passive with limit order price
-                let book_order =
-                    BookOrder::new(order.order_side(), order_price, order.quantity(), 1);
-
-                let mut fills = self.book.simulate_fills(&book_order);
+                // When liquidity consumption is enabled, get ALL crossed levels so that
+                // consumed levels can be filtered out while still finding valid ones.
+                // Otherwise simulate_fills only returns enough levels to satisfy leaves_qty,
+                // which may all be consumed, missing other valid crossed levels.
+                let mut fills = if self.config.liquidity_consumption {
+                    let size_prec = self.instrument.size_precision();
+                    self.book
+                        .get_all_crossed_levels(order.order_side(), order_price, size_prec)
+                } else {
+                    let book_order =
+                        BookOrder::new(order.order_side(), order_price, order.quantity(), 1);
+                    self.book.simulate_fills(&book_order)
+                };
 
                 // Trade execution: use trade-driven fill when book doesn't reflect trade price
                 if let Some(trade_size) = self.last_trade_size
@@ -1833,7 +1848,7 @@ impl OrderMatchingEngine {
                     }
                 }
 
-                self.apply_liquidity_consumption(fills, order.order_side())
+                self.apply_liquidity_consumption(fills, order.order_side(), order.leaves_qty())
             }
             None => panic!("Limit order must have a price"),
         }
@@ -1845,10 +1860,18 @@ impl OrderMatchingEngine {
             OrderSideSpecified::Sell => Price::min(FIXED_PRECISION),
         };
 
-        let book_order = BookOrder::new(order.order_side(), price, order.quantity(), 0);
-        let fills = self.book.simulate_fills(&book_order);
+        // When liquidity consumption is enabled, get ALL crossed levels so that
+        // consumed levels can be filtered out while still finding valid ones.
+        let fills = if self.config.liquidity_consumption {
+            let size_prec = self.instrument.size_precision();
+            self.book
+                .get_all_crossed_levels(order.order_side(), price, size_prec)
+        } else {
+            let book_order = BookOrder::new(order.order_side(), price, order.quantity(), 0);
+            self.book.simulate_fills(&book_order)
+        };
 
-        self.apply_liquidity_consumption(fills, order.order_side())
+        self.apply_liquidity_consumption(fills, order.order_side(), order.leaves_qty())
     }
 
     /// Fills a market order against the current order book.
@@ -2980,7 +3003,7 @@ impl OrderMatchingEngine {
         account_id: AccountId,
         instrument_id: InstrumentId,
         client_order_id: ClientOrderId,
-        venue_order_id: VenueOrderId,
+        venue_order_id: Option<VenueOrderId>,
         reason: Ustr,
     ) {
         let ts_now = self.clock.borrow().timestamp_ns();
@@ -2994,7 +3017,7 @@ impl OrderMatchingEngine {
             ts_now,
             ts_now,
             false,
-            Some(venue_order_id),
+            venue_order_id,
             Some(account_id),
         ));
         msgbus::send_any("ExecEngine.process".into(), &event as &dyn Any);

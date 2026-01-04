@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -29,10 +29,9 @@ use nautilus_common::{
         data::{
             BarsResponse, InstrumentResponse, InstrumentsResponse, RequestBars, RequestInstrument,
             RequestInstruments, RequestTrades, SubscribeBars, SubscribeBookDeltas,
-            SubscribeBookSnapshots, SubscribeInstrument, SubscribeInstruments, SubscribeQuotes,
-            SubscribeTrades, TradesResponse, UnsubscribeBars, UnsubscribeBookDeltas,
-            UnsubscribeBookSnapshots, UnsubscribeInstrument, UnsubscribeInstruments,
-            UnsubscribeQuotes, UnsubscribeTrades,
+            SubscribeInstrument, SubscribeInstruments, SubscribeQuotes, SubscribeTrades,
+            TradesResponse, UnsubscribeBars, UnsubscribeBookDeltas, UnsubscribeInstrument,
+            UnsubscribeInstruments, UnsubscribeQuotes, UnsubscribeTrades,
         },
     },
 };
@@ -246,13 +245,18 @@ impl DydxDataClient {
     async fn bootstrap_instruments(&mut self) -> anyhow::Result<Vec<InstrumentAny>> {
         tracing::info!("Bootstrapping dYdX instruments");
 
-        // Fetch instruments from HTTP API
-        // Note: maker_fee and taker_fee can be None initially - they'll be set to zero
-        let instruments = self
-            .http_client
-            .request_instruments(None, None, None)
+        // Populates all HTTP cache layers (instruments, clob_pair_id, market_params)
+        self.http_client
+            .fetch_and_cache_instruments()
             .await
             .context("failed to load instruments from dYdX")?;
+
+        let instruments: Vec<InstrumentAny> = self
+            .http_client
+            .instruments()
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
 
         if instruments.is_empty() {
             tracing::warn!("No dYdX instruments were loaded");
@@ -261,10 +265,6 @@ impl DydxDataClient {
 
         tracing::info!("Loaded {} dYdX instruments", instruments.len());
 
-        // Cache instruments in HTTP client (request_instruments does NOT cache automatically)
-        self.http_client.cache_instruments(instruments.clone());
-
-        // Cache in WebSocket client if present
         if let Some(ref ws) = self.ws_client {
             ws.cache_instruments(instruments.clone());
         }
@@ -273,7 +273,6 @@ impl DydxDataClient {
     }
 }
 
-// Implement DataClient trait for integration with Nautilus DataEngine
 #[async_trait::async_trait(?Send)]
 impl DataClient for DydxDataClient {
     fn client_id(&self) -> ClientId {
@@ -487,31 +486,6 @@ impl DataClient for DydxDataClient {
         Ok(())
     }
 
-    fn subscribe_book_snapshots(&mut self, cmd: &SubscribeBookSnapshots) -> anyhow::Result<()> {
-        if cmd.book_type != BookType::L2_MBP {
-            anyhow::bail!(
-                "dYdX only supports L2_MBP order book snapshots, received {:?}",
-                cmd.book_type
-            );
-        }
-
-        // Track active subscription for periodic refresh
-        self.active_orderbook_subs.insert(cmd.instrument_id, ());
-
-        let ws = self.ws_client()?.clone();
-        let instrument_id = cmd.instrument_id;
-
-        get_runtime().spawn(async move {
-            if let Err(e) = ws.subscribe_orderbook(instrument_id).await {
-                tracing::error!(
-                    "Failed to subscribe to orderbook snapshot for {instrument_id}: {e:?}"
-                );
-            }
-        });
-
-        Ok(())
-    }
-
     fn subscribe_quotes(&mut self, cmd: &SubscribeQuotes) -> anyhow::Result<()> {
         // dYdX doesn't have a dedicated quotes channel
         // Quotes are synthesized from order book deltas
@@ -612,27 +586,6 @@ impl DataClient for DydxDataClient {
                     .context("orderbook unsubscription")
             },
             "dYdX orderbook unsubscription",
-        );
-
-        Ok(())
-    }
-
-    fn unsubscribe_book_snapshots(&mut self, cmd: &UnsubscribeBookSnapshots) -> anyhow::Result<()> {
-        // dYdX orderbook channel provides both snapshots and deltas.
-        // Unsubscribing snapshots uses the same underlying channel as deltas.
-        // Remove from active subscription tracking
-        self.active_orderbook_subs.remove(&cmd.instrument_id);
-
-        let ws = self.ws_client()?.clone();
-        let instrument_id = cmd.instrument_id;
-
-        self.spawn_ws(
-            async move {
-                ws.unsubscribe_orderbook(instrument_id)
-                    .await
-                    .context("orderbook snapshot unsubscription")
-            },
-            "dYdX orderbook snapshot unsubscription",
         );
 
         Ok(())
@@ -1369,6 +1322,7 @@ impl DydxDataClient {
         let interval = Duration::from_secs(interval_secs);
         let http_client = self.http_client.clone();
         let instruments_cache = self.instruments.clone();
+        let ws_client = self.ws_client.clone();
         let cancellation_token = self.cancellation_token.clone();
 
         tracing::info!(
@@ -1389,21 +1343,25 @@ impl DydxDataClient {
                     _ = interval_timer.tick() => {
                         tracing::debug!("Refreshing instruments");
 
-                        match http_client.request_instruments(None, None, None).await {
-                            Ok(instruments) => {
-                                tracing::debug!("Refreshed {} instruments", instruments.len());
-
-                                // Update local cache with refreshed instruments
-                                for instrument in instruments {
-                                    upsert_instrument(&instruments_cache, instrument);
-                                }
-
-                                // Also update HTTP client cache via cache_instruments method
-                                let all_instruments: Vec<_> = instruments_cache
+                        // Populates all HTTP cache layers (instruments, clob_pair_id, market_params)
+                        match http_client.fetch_and_cache_instruments().await {
+                            Ok(()) => {
+                                let instruments: Vec<_> = http_client
+                                    .instruments()
                                     .iter()
                                     .map(|entry| entry.value().clone())
                                     .collect();
-                                http_client.cache_instruments(all_instruments);
+
+                                tracing::debug!("Refreshed {} instruments", instruments.len());
+
+                                for instrument in &instruments {
+                                    upsert_instrument(&instruments_cache, instrument.clone());
+                                }
+
+                                // Propagate to WS handler for message parsing
+                                if let Some(ref ws) = ws_client {
+                                    ws.cache_instruments(instruments);
+                                }
                             }
                             Err(e) => {
                                 tracing::error!("Failed to refresh instruments: {}", e);

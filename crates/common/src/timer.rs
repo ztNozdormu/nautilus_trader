@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -137,7 +137,7 @@ impl Ord for ScheduledTimeEvent {
 /// - `Rust`: Thread-safe callbacks using `Arc`. Use when the closure is `Send + Sync`.
 /// - `RustLocal`: Single-threaded callbacks using `Rc`. Use when capturing `Rc<RefCell<...>>`.
 ///
-/// # Choosing between `Rust` and `RustLocal`
+/// # Choosing Between `Rust` and `RustLocal`
 ///
 /// Use `Rust` (thread-safe) when:
 /// - The callback doesn't capture `Rc<RefCell<...>>` or other non-`Send` types.
@@ -151,7 +151,7 @@ impl Ord for ScheduledTimeEvent {
 /// with `LiveClock` because callbacks are sent through a channel and executed on the
 /// originating thread's event loop - they never actually cross thread boundaries.
 ///
-/// # Automatic conversion
+/// # Automatic Conversion
 ///
 /// - Closures that are `Fn + Send + Sync + 'static` automatically convert to `Rust`.
 /// - `Rc<dyn Fn(TimeEvent)>` converts to `RustLocal`.

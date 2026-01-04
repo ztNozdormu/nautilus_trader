@@ -1,7 +1,6 @@
 [package]
 name = "nautilus-dydx"
 readme = "README.md"
-publish = false # Do not publish to crates.io for now
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,6 +12,7 @@ keywords.workspace = true
 documentation.workspace = true
 repository.workspace = true
 homepage.workspace = true
+publish = false # Do not publish to crates.io for now
 
 [lints]
 workspace = true
@@ -22,7 +22,7 @@ name = "nautilus_dydx"
 crate-type = ["rlib", "cdylib"]
 
 [features]
-default = []
+default = ["high-precision"]
 extension-module = [
   "nautilus-common/extension-module",
   "nautilus-core/extension-module",
@@ -41,6 +41,7 @@ python = [
   "pyo3",
   "pyo3-async-runtimes",
 ]
+high-precision = ["nautilus-model/high-precision"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -54,6 +55,7 @@ nautilus-execution = { workspace = true }
 nautilus-live = { workspace = true }
 nautilus-model = { workspace = true }
 nautilus-network = { workspace = true }
+nautilus-system = { workspace = true }
 
 ahash = { workspace = true }
 anyhow = { workspace = true }
@@ -99,23 +101,29 @@ indexmap = { workspace = true }
 [[bin]]
 name = "dydx-http-public"
 path = "bin/http_public.rs"
+doc = false
 
 [[bin]]
 name = "dydx-http-private"
 path = "bin/http_private.rs"
+doc = false
 
 [[bin]]
 name = "dydx-ws-data"
 path = "bin/ws_data.rs"
+doc = false
 
 [[bin]]
 name = "dydx-live-integration"
 path = "bin/live_integration.rs"
+doc = false
 
 [[bin]]
 name = "dydx-grpc-exec"
 path = "bin/grpc_exec.rs"
+doc = false
 
 [[bin]]
 name = "dydx-ws-exec"
 path = "bin/ws_exec.rs"
+doc = false

@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -22,7 +22,7 @@
 //! Tokio task within the lock-free I/O boundary.
 
 use std::{
-    fmt::{Debug, Formatter},
+    fmt::Debug,
     str::FromStr,
     sync::{
         Arc,
@@ -110,8 +110,8 @@ pub struct FeedHandler {
 }
 
 impl Debug for FeedHandler {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FeedHandler")
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct(stringify!(FeedHandler))
             .field("account_id", &self.account_id)
             .field("instruments_count", &self.instruments.len())
             .field("bar_types_count", &self.bar_types.len())

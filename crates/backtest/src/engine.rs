@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -135,7 +135,7 @@ impl BacktestEngine {
         modules: Vec<Box<dyn SimulationModule>>,
         fill_model: FillModel,
         fee_model: FeeModelAny,
-        latency_model: Option<LatencyModel>,
+        latency_model: Option<Box<dyn LatencyModel>>,
         routing: Option<bool>,
         reject_stop_orders: Option<bool>,
         support_gtd_orders: Option<bool>,

@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -31,14 +31,13 @@ use nautilus_common::{
         ExecutionEvent,
         execution::{
             BatchCancelOrders, CancelAllOrders, CancelOrder, GenerateFillReports,
-            GenerateOrderStatusReport, GeneratePositionReports, ModifyOrder, QueryAccount,
-            QueryOrder, SubmitOrder, SubmitOrderList,
+            GenerateOrderStatusReport, GenerateOrderStatusReports, GeneratePositionStatusReports,
+            ModifyOrder, QueryAccount, QueryOrder, SubmitOrder, SubmitOrderList,
         },
     },
 };
 use nautilus_core::{MUTEX_POISONED, UnixNanos};
 use nautilus_execution::client::{ExecutionClient, base::ExecutionClientCore};
-use nautilus_live::execution::client::LiveExecutionClient;
 use nautilus_model::{
     accounts::AccountAny,
     enums::OmsType,
@@ -282,6 +281,44 @@ impl ExecutionClient for DeribitExecutionClient {
         Ok(())
     }
 
+    async fn generate_order_status_report(
+        &self,
+        _cmd: &GenerateOrderStatusReport,
+    ) -> anyhow::Result<Option<OrderStatusReport>> {
+        todo!("Implement generate_order_status_report for Deribit execution client");
+    }
+
+    async fn generate_order_status_reports(
+        &self,
+        _cmd: &GenerateOrderStatusReports,
+    ) -> anyhow::Result<Vec<OrderStatusReport>> {
+        todo!("Implement generate_order_status_reports for Deribit execution client");
+    }
+
+    async fn generate_fill_reports(
+        &self,
+        _cmd: GenerateFillReports,
+    ) -> anyhow::Result<Vec<FillReport>> {
+        todo!("Implement generate_fill_reports for Deribit execution client");
+    }
+
+    async fn generate_position_status_reports(
+        &self,
+        _cmd: &GeneratePositionStatusReports,
+    ) -> anyhow::Result<Vec<PositionStatusReport>> {
+        todo!("Implement generate_position_status_reports for Deribit execution client");
+    }
+
+    async fn generate_mass_status(
+        &self,
+        lookback_mins: Option<u64>,
+    ) -> anyhow::Result<Option<ExecutionMassStatus>> {
+        tracing::warn!(
+            "generate_mass_status not yet implemented (lookback_mins={lookback_mins:?})"
+        );
+        Ok(None)
+    }
+
     fn query_account(&self, _cmd: &QueryAccount) -> anyhow::Result<()> {
         let http_client = self.http_client.clone();
         let account_id = self.core.account_id;
@@ -332,46 +369,5 @@ impl ExecutionClient for DeribitExecutionClient {
 
     fn batch_cancel_orders(&self, _cmd: &BatchCancelOrders) -> anyhow::Result<()> {
         todo!("Implement batch_cancel_orders for Deribit execution client");
-    }
-}
-
-#[async_trait(?Send)]
-impl LiveExecutionClient for DeribitExecutionClient {
-    async fn generate_order_status_report(
-        &self,
-        _cmd: &GenerateOrderStatusReport,
-    ) -> anyhow::Result<Option<OrderStatusReport>> {
-        todo!("Implement generate_order_status_report for Deribit execution client");
-    }
-
-    async fn generate_order_status_reports(
-        &self,
-        _cmd: &GenerateOrderStatusReport,
-    ) -> anyhow::Result<Vec<OrderStatusReport>> {
-        todo!("Implement generate_order_status_reports for Deribit execution client");
-    }
-
-    async fn generate_fill_reports(
-        &self,
-        _cmd: GenerateFillReports,
-    ) -> anyhow::Result<Vec<FillReport>> {
-        todo!("Implement generate_fill_reports for Deribit execution client");
-    }
-
-    async fn generate_position_status_reports(
-        &self,
-        _cmd: &GeneratePositionReports,
-    ) -> anyhow::Result<Vec<PositionStatusReport>> {
-        todo!("Implement generate_position_status_reports for Deribit execution client");
-    }
-
-    async fn generate_mass_status(
-        &self,
-        lookback_mins: Option<u64>,
-    ) -> anyhow::Result<Option<ExecutionMassStatus>> {
-        tracing::warn!(
-            "generate_mass_status not yet implemented (lookback_mins={lookback_mins:?})"
-        );
-        Ok(None)
     }
 }

@@ -209,8 +209,9 @@ distclean: clean  #-- Nuclear clean - remove all untracked files (requires FORCE
 #== Code Quality
 
 .PHONY: format
-format:  #-- Format Rust code using nightly formatter
+format:  #-- Format Rust (with nightly) and Python code
 	cargo +nightly fmt
+	uv run --active --no-sync ruff format .
 
 .PHONY: pre-commit
 pre-commit:  #-- Run all pre-commit hooks on all files
@@ -236,7 +237,7 @@ pre-flight:  #-- Run comprehensive pre-flight checks (format, check-code, cargo-
 	fi
 	@$(MAKE) --no-print-directory format
 	@$(MAKE) --no-print-directory check-code
-	@$(MAKE) --no-print-directory cargo-test
+	@$(MAKE) --no-print-directory cargo-test-extras
 	@$(MAKE) --no-print-directory build-debug
 	@$(MAKE) --no-print-directory pytest
 	@printf "$(GREEN)All pre-flight checks passed$(RESET)\n"

@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -2878,10 +2878,6 @@ mod tests {
         assert!(client_id_aliases.contains_key(&child2));
         assert!(handler.fee_cache.contains_key(&venue_id2.inner()));
     }
-
-    // ==================================================================================
-    // Channel routing integration tests
-    // ==================================================================================
 
     mod channel_routing {
         use nautilus_core::nanos::UnixNanos;

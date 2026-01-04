@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -37,10 +37,6 @@ const SPOT_BOOK_UPDATE: &str = include_str!("../test_data/ws_book_update.json");
 const FUTURES_HEARTBEAT: &str = r#"{"feed":"heartbeat"}"#;
 const FUTURES_PONG: &str = r#"{"event":"pong"}"#;
 const SPOT_HEARTBEAT: &str = r#"{"channel":"heartbeat"}"#;
-
-// =============================================================================
-// FUTURES BENCHMARKS
-// =============================================================================
 
 fn bench_futures_classification(c: &mut Criterion) {
     let mut group = c.benchmark_group("Futures Classification");
@@ -128,10 +124,6 @@ fn bench_futures_batch(c: &mut Criterion) {
 
     group.finish();
 }
-
-// =============================================================================
-// SPOT V2 BENCHMARKS
-// =============================================================================
 
 fn bench_spot_parsing(c: &mut Criterion) {
     let mut group = c.benchmark_group("Spot Parsing");
@@ -242,10 +234,6 @@ fn bench_spot_batch(c: &mut Criterion) {
 
     group.finish();
 }
-
-// =============================================================================
-// SHARED BENCHMARKS
-// =============================================================================
 
 fn bench_subscription_check(c: &mut Criterion) {
     let mut group = c.benchmark_group("Subscription Check");

@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -2315,10 +2315,6 @@ mod tests {
         assert!((report.quantity.as_f64() - 0.1).abs() < 1e-9);
     }
 
-    // ========================================================================
-    // Test Fixtures for Instrument Parsing
-    // ========================================================================
-
     fn create_test_spot_instrument() -> BitmexInstrument {
         BitmexInstrument {
             symbol: Ustr::from("XBTUSD"),
@@ -2672,10 +2668,6 @@ mod tests {
             prev_total_volume: None,
         }
     }
-
-    // ========================================================================
-    // Instrument Parsing Tests
-    // ========================================================================
 
     #[rstest]
     fn test_parse_spot_instrument() {

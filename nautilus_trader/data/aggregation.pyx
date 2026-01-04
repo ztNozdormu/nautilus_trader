@@ -1,5 +1,5 @@
 # -------------------------------------------------------------------------------------------------
-#  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
+#  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
 #  https://nautechsystems.io
 #
 #  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -1370,8 +1370,6 @@ cdef class TimeBarAggregator(BarAggregator):
         The origin time offset.
     bar_build_delay : int, default 0
         The time delay (microseconds) before building and emitting a composite bar type.
-        15 microseconds can be useful in a backtest context, when aggregating internal bars
-        from internal bars several times so all messages are processed before a timer triggers.
 
     Raises
     ------
@@ -1702,6 +1700,8 @@ cdef class SpreadQuoteAggregator:
         The interval in seconds for timer-driven quote building. If None, uses quote-driven mode
         (builds immediately when all legs have quotes). If an integer, uses timer-driven mode
         (reads from internal state at the specified interval).
+    quote_build_delay : int, default 0
+        The time delay (microseconds) before building and emitting a quote.
 
     Raises
     ------
@@ -1717,6 +1717,7 @@ cdef class SpreadQuoteAggregator:
         Clock clock not None,
         bint historical,
         object update_interval_seconds = None,
+        int quote_build_delay = 0,
     ):
         self._handler = handler
         self._clock = clock
@@ -1747,6 +1748,7 @@ cdef class SpreadQuoteAggregator:
         self._is_futures_spread = self._spread_instrument.instrument_class == InstrumentClass.FUTURES_SPREAD
         self.historical_mode = historical
         self._update_interval_seconds = update_interval_seconds
+        self._quote_build_delay = quote_build_delay
         self.is_running = False
         self._historical_events = []
 
@@ -1775,6 +1777,7 @@ cdef class SpreadQuoteAggregator:
 
         cdef datetime now = self._clock.utc_now()
         start_time = find_closest_smaller_time(now, pd.Timedelta(0), pd.Timedelta(seconds=<int>self._update_interval_seconds))
+        start_time += timedelta(microseconds=self._quote_build_delay)
 
         # Determine if we should fire immediately (if start_time equals now)
         cdef bint fire_immediately = (start_time == now)
@@ -1897,7 +1900,9 @@ cdef class SpreadQuoteAggregator:
         non_zero_multipliers = vega_multipliers[vega_multipliers != 0]
         if len(non_zero_multipliers) == 0:
             self._log.warning(
-                f"All vegas are zero for spread {self._spread_instrument_id}, cannot generate spread quote"
+                f"No vega information available for the components of {self._spread_instrument_id}. "
+                f"Will generate spread quote using component quotes only. "
+                f"Subscribe to some underlying price information for more precise quotes."
             )
             return self._create_futures_spread_prices()
 

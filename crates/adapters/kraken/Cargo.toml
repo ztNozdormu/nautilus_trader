@@ -11,14 +11,13 @@ license.workspace = true
 description = "Kraken Pro exchange integration adapter for the Nautilus trading engine"
 keywords.workspace = true
 categories.workspace = true
-publish = false # Do not publish to crates.io for now
 
 [lib]
 name = "nautilus_kraken"
 crate-type = ["rlib", "cdylib"]
 
 [features]
-default = []
+default = ["high-precision"]
 python = [
   "nautilus-common/python",
   "nautilus-core/python",
@@ -39,6 +38,7 @@ extension-module = [
   "nautilus-network/extension-module",
   "pyo3/extension-module",
 ]
+high-precision = ["nautilus-model/high-precision"]
 
 [dependencies]
 nautilus-common = { workspace = true, features = ["live"] }
@@ -90,14 +90,17 @@ url = { workspace = true }
 [[bin]]
 name = "kraken-http-spot-raw"
 path = "bin/http_spot_raw.rs"
+doc = false
 
 [[bin]]
 name = "kraken-http-spot-public"
 path = "bin/http_spot_public.rs"
+doc = false
 
 [[bin]]
 name = "kraken-ws-spot-data"
 path = "bin/ws_spot_data.rs"
+doc = false
 
 # Run with `cargo bench -p nautilus-kraken --bench websocket`
 [[bench]]

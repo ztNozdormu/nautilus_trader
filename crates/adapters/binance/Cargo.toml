@@ -21,12 +21,9 @@ workspace = true
 name = "nautilus_binance"
 crate-type = ["rlib", "cdylib"]
 
-[[bin]]
-name = "binance-spot-http-public"
-path = "bin/http_public.rs"
-
 [features]
-default = []
+default = ["high-precision"]
+high-precision = ["nautilus-model/high-precision"]
 extension-module = [
   "nautilus-common/extension-module",
   "nautilus-core/extension-module",
@@ -71,7 +68,6 @@ chrono = { workspace = true }
 dashmap = { workspace = true }
 derive_builder = { workspace = true }
 ed25519-dalek = { workspace = true }
-dotenvy = { workspace = true }
 futures-util = { workspace = true }
 hex = { workspace = true }
 indexmap = { workspace = true }
@@ -83,6 +79,7 @@ serde_urlencoded = { workspace = true }
 strum = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -101,3 +98,13 @@ rust_decimal_macros = { workspace = true }
 tracing-test = { workspace = true }
 url = { workspace = true }
 axum = { workspace = true }
+
+[[bin]]
+name = "binance-spot-http-public"
+path = "bin/http_public.rs"
+doc = false
+
+[[bin]]
+name = "binance-spot-ws-data"
+path = "bin/ws_spot_data.rs"
+doc = false
