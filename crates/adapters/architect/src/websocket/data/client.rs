@@ -41,7 +41,7 @@ use ustr::Ustr;
 use super::handler::{FeedHandler, HandlerCommand};
 use crate::{
     common::enums::{ArchitectCandleWidth, ArchitectMarketDataLevel},
-    websocket::messages::ArchitectMdWsMessage,
+    websocket::messages::NautilusWsMessage,
 };
 
 /// Default heartbeat interval in seconds.
@@ -87,7 +87,7 @@ pub struct ArchitectMdWebSocketClient {
     auth_token: Option<String>,
     connection_mode: Arc<ArcSwap<AtomicU8>>,
     cmd_tx: Arc<tokio::sync::RwLock<tokio::sync::mpsc::UnboundedSender<HandlerCommand>>>,
-    out_rx: Option<Arc<tokio::sync::mpsc::UnboundedReceiver<ArchitectMdWsMessage>>>,
+    out_rx: Option<Arc<tokio::sync::mpsc::UnboundedReceiver<NautilusWsMessage>>>,
     signal: Arc<AtomicBool>,
     task_handle: Option<Arc<tokio::task::JoinHandle<()>>>,
     subscriptions: SubscriptionState,
@@ -153,6 +153,13 @@ impl ArchitectMdWebSocketClient {
     #[must_use]
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    /// Sets the authentication token for subsequent connections.
+    ///
+    /// This should be called before `connect()` if authentication is required.
+    pub fn set_auth_token(&mut self, token: String) {
+        self.auth_token = Some(token);
     }
 
     /// Returns whether the client is currently connected and active.
@@ -268,27 +275,22 @@ impl ArchitectMdWebSocketClient {
             {
                 Ok(Ok(client)) => {
                     if attempt > 1 {
-                        tracing::info!("WebSocket connection established after {attempt} attempts");
+                        log::info!("WebSocket connection established after {attempt} attempts");
                     }
                     break client;
                 }
                 Ok(Err(e)) => {
                     last_error = e.to_string();
-                    tracing::warn!(
-                        attempt,
-                        max_retries = MAX_RETRIES,
-                        url = %self.url,
-                        error = %last_error,
-                        "WebSocket connection attempt failed"
+                    log::warn!(
+                        "WebSocket connection attempt failed: attempt={attempt}/{MAX_RETRIES}, url={}, error={last_error}",
+                        self.url
                     );
                 }
                 Err(_) => {
                     last_error = format!("Connection timeout after {CONNECTION_TIMEOUT_SECS}s");
-                    tracing::warn!(
-                        attempt,
-                        max_retries = MAX_RETRIES,
-                        url = %self.url,
-                        "WebSocket connection attempt timed out"
+                    log::warn!(
+                        "WebSocket connection attempt timed out: attempt={attempt}/{MAX_RETRIES}, url={}",
+                        self.url
                     );
                 }
             }
@@ -306,7 +308,7 @@ impl ArchitectMdWebSocketClient {
             }
 
             let delay = backoff.next_duration();
-            tracing::debug!(
+            log::debug!(
                 "Retrying in {delay:?} (attempt {}/{MAX_RETRIES})",
                 attempt + 1
             );
@@ -315,7 +317,7 @@ impl ArchitectMdWebSocketClient {
 
         self.connection_mode.store(client.connection_mode_atomic());
 
-        let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<ArchitectMdWsMessage>();
+        let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<NautilusWsMessage>();
         self.out_rx = Some(Arc::new(out_rx));
 
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<HandlerCommand>();
@@ -346,18 +348,18 @@ impl ArchitectMdWebSocketClient {
             );
 
             while let Some(msg) = handler.next().await {
-                if matches!(msg, ArchitectMdWsMessage::Reconnected) {
-                    tracing::info!("WebSocket reconnected, resubscribing...");
+                if matches!(msg, NautilusWsMessage::Reconnected) {
+                    log::info!("WebSocket reconnected, resubscribing...");
                     // TODO: Replay subscriptions on reconnect
                 }
 
                 if out_tx.send(msg).is_err() {
-                    tracing::debug!("Output channel closed");
+                    log::debug!("Output channel closed");
                     break;
                 }
             }
 
-            tracing::debug!("Handler loop exited");
+            log::debug!("Handler loop exited");
         });
 
         self.task_handle = Some(Arc::new(stream_handle));
@@ -463,7 +465,7 @@ impl ArchitectMdWebSocketClient {
     /// # Panics
     ///
     /// Panics if called more than once or before connecting.
-    pub fn stream(&mut self) -> impl futures_util::Stream<Item = ArchitectMdWsMessage> + use<'_> {
+    pub fn stream(&mut self) -> impl futures_util::Stream<Item = NautilusWsMessage> + use<'_> {
         let rx = self
             .out_rx
             .take()
@@ -478,13 +480,13 @@ impl ArchitectMdWebSocketClient {
 
     /// Disconnects the WebSocket connection gracefully.
     pub async fn disconnect(&self) {
-        tracing::debug!("Disconnecting WebSocket");
+        log::debug!("Disconnecting WebSocket");
         let _ = self.send_cmd(HandlerCommand::Disconnect).await;
     }
 
     /// Closes the WebSocket connection and cleans up resources.
     pub async fn close(&mut self) {
-        tracing::debug!("Closing WebSocket client");
+        log::debug!("Closing WebSocket client");
         self.signal.store(true, Ordering::Relaxed);
 
         let _ = self.send_cmd(HandlerCommand::Disconnect).await;
@@ -502,9 +504,9 @@ impl ArchitectMdWebSocketClient {
             })
             .await
             {
-                Ok(()) => tracing::debug!("Handler task completed gracefully"),
+                Ok(()) => log::debug!("Handler task completed gracefully"),
                 Err(_) => {
-                    tracing::warn!("Handler task did not complete within timeout, aborting");
+                    log::warn!("Handler task did not complete within timeout, aborting");
                     handle.abort();
                 }
             }

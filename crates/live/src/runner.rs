@@ -206,6 +206,18 @@ impl AsyncRunner {
         self.channels
     }
 
+    /// Drains all pending data events from the channel and processes them.
+    pub fn drain_pending_data_events(&mut self) {
+        let mut count = 0;
+        while let Ok(evt) = self.channels.data_evt_rx.try_recv() {
+            Self::handle_data_event(evt);
+            count += 1;
+        }
+        if count > 0 {
+            log::debug!("Drained {count} pending data events");
+        }
+    }
+
     /// Runs the async runner event loop.
     ///
     /// This method processes data events, time events, execution events, and signal events in an async loop.
@@ -216,7 +228,7 @@ impl AsyncRunner {
         loop {
             tokio::select! {
                 Some(()) = self.signal_rx.recv() => {
-                    tracing::info!("AsyncRunner received signal, shutting down");
+                    log::info!("AsyncRunner received signal, shutting down");
                     return;
                 },
                 Some(handler) = self.channels.time_evt_rx.recv() => {
@@ -235,7 +247,7 @@ impl AsyncRunner {
                     Self::handle_exec_event(evt);
                 },
                 else => {
-                    tracing::debug!("AsyncRunner all channels closed, exiting");
+                    log::debug!("AsyncRunner all channels closed, exiting");
                     return;
                 }
             };
@@ -442,6 +454,7 @@ mod tests {
             data_type: DataType::new("QuoteTick", None),
             command_id: UUID4::new(),
             ts_init: UnixNanos::default(),
+            correlation_id: None,
             params: None,
         }));
 
@@ -857,6 +870,7 @@ mod tests {
             data_type: DataType::new("QuoteTick", None),
             command_id: UUID4::new(),
             ts_init: UnixNanos::default(),
+            correlation_id: None,
             params: None,
         }));
         data_cmd_tx.send(command).unwrap();
