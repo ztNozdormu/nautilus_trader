@@ -37,7 +37,7 @@
 
 use futures_util::StreamExt;
 use nautilus_common::live::get_runtime;
-use nautilus_core::python::{to_pyruntime_err, to_pyvalue_err};
+use nautilus_core::python::{call_python, to_pyruntime_err, to_pyvalue_err};
 use nautilus_model::{
     data::{Data, OrderBookDeltas_API},
     identifiers::InstrumentId,
@@ -62,21 +62,14 @@ where
         match result {
             Ok(obj) => {
                 if let Err(e) = callback.call1(py, (obj,)) {
-                    tracing::error!("Error calling Python callback: {e}");
+                    log::error!("Error calling Python callback: {e}");
                 }
             }
             Err(e) => {
-                tracing::error!("Error converting to Python object: {e}");
+                log::error!("Error converting to Python object: {e}");
             }
         }
     });
-}
-
-/// Helper function to call Python callback with a PyObject.
-fn call_python(py: Python<'_>, callback: &Py<PyAny>, obj: Py<PyAny>) {
-    if let Err(e) = callback.call1(py, (obj,)) {
-        tracing::error!("Error calling Python callback: {e}");
-    }
 }
 
 #[pymethods]
@@ -236,19 +229,19 @@ impl DeribitWebSocketClient {
                             call_python(py, &callback, py_obj);
                         }),
                         NautilusWsMessage::Error(err) => {
-                            tracing::error!("Deribit WebSocket error: {err}");
+                            log::error!("Deribit WebSocket error: {err}");
                         }
                         NautilusWsMessage::Reconnected => {
-                            tracing::info!("Deribit WebSocket reconnected");
+                            log::info!("Deribit WebSocket reconnected");
                         }
                         NautilusWsMessage::Authenticated(auth_result) => {
-                            tracing::info!(
+                            log::info!(
                                 "Deribit WebSocket authenticated (scope: {})",
                                 auth_result.scope
                             );
                         }
                         NautilusWsMessage::Raw(msg) => {
-                            tracing::debug!("Received raw message, skipping: {msg}");
+                            log::debug!("Received raw message, skipping: {msg}");
                         }
                         NautilusWsMessage::FundingRates(funding_rates) => Python::attach(|py| {
                             for funding_rate in funding_rates {
@@ -289,7 +282,7 @@ impl DeribitWebSocketClient {
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             if let Err(e) = client.close().await {
-                tracing::error!("Error on close: {e}");
+                log::error!("Error on close: {e}");
             }
             Ok(())
         })

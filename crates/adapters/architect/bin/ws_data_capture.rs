@@ -31,7 +31,7 @@ use futures_util::StreamExt;
 use nautilus_architect::{
     common::enums::{ArchitectEnvironment, ArchitectMarketDataLevel},
     http::{client::ArchitectRawHttpClient, error::ArchitectHttpError},
-    websocket::{ArchitectMdWsMessage, data::ArchitectMdWebSocketClient},
+    websocket::{NautilusWsMessage, data::ArchitectMdWebSocketClient},
 };
 use totp_rs::{Algorithm, Secret, TOTP};
 
@@ -39,9 +39,7 @@ const TEST_SYMBOL: &str = "EURUSD-PERP";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .init();
+    nautilus_common::logging::ensure_logging_initialized();
 
     let api_key = std::env::var("ARCHITECT_API_KEY")
         .expect("ARCHITECT_API_KEY environment variable required");
@@ -58,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ArchitectEnvironment::Production
     };
 
-    tracing::info!("Environment: {environment}");
+    log::info!("Environment: {environment}");
 
     let http_client = ArchitectRawHttpClient::new(
         Some(environment.http_url().to_string()),
@@ -93,12 +91,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     };
-    tracing::info!("Authenticated successfully");
+    log::info!("Authenticated successfully");
 
     let mut captured: HashMap<String, String> = HashMap::new();
     let test_data_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_data");
 
-    tracing::info!("=== Capturing L1 data for {TEST_SYMBOL} ===");
+    log::info!("=== Capturing L1 data for {TEST_SYMBOL} ===");
     capture_level(
         &auth_response.token,
         &environment,
@@ -107,7 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
-    tracing::info!("=== Capturing L2 data for {TEST_SYMBOL} ===");
+    log::info!("=== Capturing L2 data for {TEST_SYMBOL} ===");
     capture_level(
         &auth_response.token,
         &environment,
@@ -116,7 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
-    tracing::info!("=== Capturing L3 data for {TEST_SYMBOL} ===");
+    log::info!("=== Capturing L3 data for {TEST_SYMBOL} ===");
     capture_level(
         &auth_response.token,
         &environment,
@@ -125,7 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
-    tracing::info!("Saving captured data to {:?}", test_data_dir);
+    log::info!("Saving captured data to {test_data_dir:?}");
 
     for (msg_type, json) in &captured {
         let filename = match msg_type.as_str() {
@@ -140,10 +138,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let path = test_data_dir.join(filename);
         fs::write(&path, json)?;
-        tracing::info!("Saved {filename}");
+        log::info!("Saved {filename}");
     }
 
-    tracing::info!("Done! Captured {} message types", captured.len());
+    log::info!("Done! Captured {} message types", captured.len());
 
     Ok(())
 }
@@ -173,29 +171,15 @@ async fn capture_level(
 
         while let Some(msg) = stream.next().await {
             let (msg_type, json) = match &msg {
-                ArchitectMdWsMessage::Heartbeat(hb) => {
-                    ("h".to_string(), serde_json::to_string_pretty(hb).unwrap())
-                }
-                ArchitectMdWsMessage::Ticker(t) => {
-                    ("t".to_string(), serde_json::to_string_pretty(t).unwrap())
-                }
-                ArchitectMdWsMessage::Trade(t) => {
-                    ("s".to_string(), serde_json::to_string_pretty(t).unwrap())
-                }
-                ArchitectMdWsMessage::BookL1(b) => {
-                    ("1".to_string(), serde_json::to_string_pretty(b).unwrap())
-                }
-                ArchitectMdWsMessage::BookL2(b) => {
-                    ("2".to_string(), serde_json::to_string_pretty(b).unwrap())
-                }
-                ArchitectMdWsMessage::BookL3(b) => {
-                    ("3".to_string(), serde_json::to_string_pretty(b).unwrap())
-                }
+                NautilusWsMessage::Heartbeat => ("h".to_string(), "{}".to_string()),
+                NautilusWsMessage::Data(data) => ("data".to_string(), format!("{data:?}")),
+                NautilusWsMessage::Deltas(deltas) => ("deltas".to_string(), format!("{deltas:?}")),
+                NautilusWsMessage::Bar(bar) => ("bar".to_string(), format!("{bar:?}")),
                 _ => continue,
             };
 
             if let std::collections::hash_map::Entry::Vacant(e) = captured.entry(msg_type) {
-                tracing::info!("Captured new message type: {}", e.key());
+                log::info!("Captured new message type: {}", e.key());
                 e.insert(json);
                 count += 1;
             }

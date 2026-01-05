@@ -18,26 +18,27 @@
 use anyhow::Context;
 use nautilus_core::nanos::UnixNanos;
 use nautilus_model::{
-    data::{BookOrder, OrderBookDelta, OrderBookDeltas, QuoteTick, TradeTick},
-    enums::{AggressorSide, BookAction, OrderSide, RecordFlag},
+    data::{Bar, BarType, BookOrder, OrderBookDelta, OrderBookDeltas, QuoteTick, TradeTick},
+    enums::{AggregationSource, AggressorSide, BookAction, OrderSide, RecordFlag},
     identifiers::TradeId,
     instruments::{Instrument, any::InstrumentAny},
     types::{Price, Quantity},
 };
+use rust_decimal::Decimal;
 
-use crate::websocket::messages::{
-    ArchitectBookLevel, ArchitectBookLevelL3, ArchitectMdBookL1, ArchitectMdBookL2,
-    ArchitectMdBookL3, ArchitectMdTrade,
+use crate::{
+    http::parse::candle_width_to_bar_spec,
+    websocket::messages::{
+        ArchitectBookLevel, ArchitectBookLevelL3, ArchitectMdBookL1, ArchitectMdBookL2,
+        ArchitectMdBookL3, ArchitectMdCandle, ArchitectMdTrade,
+    },
 };
 
 const NANOSECONDS_IN_SECOND: u64 = 1_000_000_000;
 
-/// Parses a price string with specified precision.
-fn parse_price_with_precision(value: &str, precision: u8, field: &str) -> anyhow::Result<Price> {
-    let parsed = value
-        .parse::<f64>()
-        .with_context(|| format!("Failed to parse {field}='{value}' as f64"))?;
-    Price::new_checked(parsed, precision).with_context(|| {
+/// Converts a Decimal to Price with specified precision.
+fn decimal_to_price_dp(value: Decimal, precision: u8, field: &str) -> anyhow::Result<Price> {
+    Price::from_decimal_dp(value, precision).with_context(|| {
         format!("Failed to construct Price for {field} with precision {precision}")
     })
 }
@@ -59,7 +60,7 @@ pub fn parse_book_l1_quote(
 
     let (bid_price, bid_size) = if let Some(bid) = book.b.first() {
         (
-            parse_price_with_precision(&bid.p, price_precision, "book.bid.price")?,
+            decimal_to_price_dp(bid.p, price_precision, "book.bid.price")?,
             Quantity::new(bid.q as f64, size_precision),
         )
     } else {
@@ -71,7 +72,7 @@ pub fn parse_book_l1_quote(
 
     let (ask_price, ask_size) = if let Some(ask) = book.a.first() {
         (
-            parse_price_with_precision(&ask.p, price_precision, "book.ask.price")?,
+            decimal_to_price_dp(ask.p, price_precision, "book.ask.price")?,
             Quantity::new(ask.q as f64, size_precision),
         )
     } else {
@@ -101,7 +102,7 @@ fn parse_book_level(
     price_precision: u8,
     size_precision: u8,
 ) -> anyhow::Result<(Price, Quantity)> {
-    let price = parse_price_with_precision(&level.p, price_precision, "book.level.price")?;
+    let price = decimal_to_price_dp(level.p, price_precision, "book.level.price")?;
     let size = Quantity::new(level.q as f64, size_precision);
     Ok((price, size))
 }
@@ -204,7 +205,7 @@ fn parse_book_level_l3(
     price_precision: u8,
     size_precision: u8,
 ) -> anyhow::Result<(Price, Quantity)> {
-    let price = parse_price_with_precision(&level.p, price_precision, "book.level.price")?;
+    let price = decimal_to_price_dp(level.p, price_precision, "book.level.price")?;
     let size = Quantity::new(level.q as f64, size_precision);
     Ok((price, size))
 }
@@ -328,7 +329,7 @@ pub fn parse_trade_tick(
     let price_precision = instrument.price_precision();
     let size_precision = instrument.size_precision();
 
-    let price = parse_price_with_precision(&trade.p, price_precision, "trade.price")?;
+    let price = decimal_to_price_dp(trade.p, price_precision, "trade.price")?;
     let size = Quantity::new(trade.q as f64, size_precision);
     let aggressor_side: AggressorSide = trade.d.into();
 
@@ -350,6 +351,34 @@ pub fn parse_trade_tick(
     .context("Failed to construct TradeTick from Architect trade message")
 }
 
+/// Parses an Architect candle message into a [`Bar`].
+///
+/// # Errors
+///
+/// Returns an error if price or quantity parsing fails.
+pub fn parse_candle_bar(
+    candle: &ArchitectMdCandle,
+    instrument: &InstrumentAny,
+    ts_init: UnixNanos,
+) -> anyhow::Result<Bar> {
+    let price_precision = instrument.price_precision();
+    let size_precision = instrument.size_precision();
+
+    let open = decimal_to_price_dp(candle.open, price_precision, "candle.open")?;
+    let high = decimal_to_price_dp(candle.high, price_precision, "candle.high")?;
+    let low = decimal_to_price_dp(candle.low, price_precision, "candle.low")?;
+    let close = decimal_to_price_dp(candle.close, price_precision, "candle.close")?;
+    let volume = Quantity::new(candle.volume as f64, size_precision);
+
+    let ts_event = UnixNanos::from((candle.ts as u64) * NANOSECONDS_IN_SECOND);
+
+    let bar_spec = candle_width_to_bar_spec(candle.width);
+    let bar_type = BarType::new(instrument.id(), bar_spec, AggregationSource::External);
+
+    Bar::new_checked(bar_type, open, high, low, close, volume, ts_event, ts_init)
+        .context("Failed to construct Bar from Architect candle message")
+}
+
 #[cfg(test)]
 mod tests {
     use nautilus_model::{
@@ -359,13 +388,15 @@ mod tests {
     };
     use rstest::rstest;
     use rust_decimal::Decimal;
+    use rust_decimal_macros::dec;
     use ustr::Ustr;
 
     use super::*;
     use crate::{
         common::{consts::ARCHITECT_VENUE, enums::ArchitectOrderSide},
         websocket::messages::{
-            ArchitectMdBookL1, ArchitectMdBookL2, ArchitectMdBookL3, ArchitectMdTrade,
+            ArchitectMdBookL1, ArchitectMdBookL2, ArchitectMdBookL3, ArchitectMdCandle,
+            ArchitectMdTrade,
         },
     };
 
@@ -422,11 +453,11 @@ mod tests {
             tn: 12345,
             s: Ustr::from("BTC-PERP"),
             b: vec![ArchitectBookLevel {
-                p: "50000.50".to_string(),
+                p: dec!(50000.50),
                 q: 100,
             }],
             a: vec![ArchitectBookLevel {
-                p: "50001.00".to_string(),
+                p: dec!(50001.00),
                 q: 150,
             }],
         };
@@ -451,21 +482,21 @@ mod tests {
             s: Ustr::from("BTC-PERP"),
             b: vec![
                 ArchitectBookLevel {
-                    p: "50000.50".to_string(),
+                    p: dec!(50000.50),
                     q: 100,
                 },
                 ArchitectBookLevel {
-                    p: "50000.00".to_string(),
+                    p: dec!(50000.00),
                     q: 200,
                 },
             ],
             a: vec![
                 ArchitectBookLevel {
-                    p: "50001.00".to_string(),
+                    p: dec!(50001.00),
                     q: 150,
                 },
                 ArchitectBookLevel {
-                    p: "50001.50".to_string(),
+                    p: dec!(50001.50),
                     q: 250,
                 },
             ],
@@ -491,12 +522,12 @@ mod tests {
             tn: 12345,
             s: Ustr::from("BTC-PERP"),
             b: vec![ArchitectBookLevelL3 {
-                p: "50000.50".to_string(),
+                p: dec!(50000.50),
                 q: 300,
                 o: vec![100, 200],
             }],
             a: vec![ArchitectBookLevelL3 {
-                p: "50001.00".to_string(),
+                p: dec!(50001.00),
                 q: 250,
                 o: vec![150, 100],
             }],
@@ -519,7 +550,7 @@ mod tests {
             ts: 1700000000,
             tn: 12345,
             s: Ustr::from("BTC-PERP"),
-            p: "50000.50".to_string(),
+            p: dec!(50000.50),
             q: 100,
             d: ArchitectOrderSide::Buy,
         };
@@ -632,7 +663,7 @@ mod tests {
         let trade: ArchitectMdTrade = serde_json::from_str(json).unwrap();
 
         assert_eq!(trade.s.as_str(), "EURUSD-PERP");
-        assert_eq!(trade.p, "1.1719");
+        assert_eq!(trade.p, dec!(1.1719));
         assert_eq!(trade.q, 400);
         assert_eq!(trade.d, ArchitectOrderSide::Buy);
 
@@ -690,5 +721,58 @@ mod tests {
         assert_eq!(deltas.deltas.len(), 1);
         assert_eq!(deltas.deltas[0].action, BookAction::Clear);
         assert!(deltas.deltas[0].flags & RecordFlag::F_LAST as u8 != 0);
+    }
+
+    #[rstest]
+    fn test_parse_candle_bar() {
+        use crate::common::enums::ArchitectCandleWidth;
+
+        let candle = ArchitectMdCandle {
+            t: "c".to_string(),
+            symbol: Ustr::from("BTC-PERP"),
+            ts: 1700000000,
+            open: dec!(50000.00),
+            high: dec!(51000.00),
+            low: dec!(49500.00),
+            close: dec!(50500.00),
+            volume: 1000,
+            buy_volume: 600,
+            sell_volume: 400,
+            width: ArchitectCandleWidth::Minutes1,
+        };
+
+        let instrument = create_test_instrument();
+        let ts_init = UnixNanos::default();
+
+        let bar = parse_candle_bar(&candle, &instrument, ts_init).unwrap();
+
+        assert_eq!(bar.open.as_f64(), 50000.00);
+        assert_eq!(bar.high.as_f64(), 51000.00);
+        assert_eq!(bar.low.as_f64(), 49500.00);
+        assert_eq!(bar.close.as_f64(), 50500.00);
+        assert_eq!(bar.volume.as_f64(), 1000.0);
+        assert_eq!(bar.bar_type.instrument_id().symbol.as_str(), "BTC-PERP");
+    }
+
+    #[rstest]
+    fn test_parse_candle_from_test_data() {
+        let json = include_str!("../../../test_data/ws_md_candle.json");
+        let candle: ArchitectMdCandle = serde_json::from_str(json).unwrap();
+
+        assert_eq!(candle.symbol.as_str(), "BTCUSD-PERP");
+        assert_eq!(candle.open, dec!(49500.00));
+        assert_eq!(candle.close, dec!(50000.00));
+
+        let instrument = create_instrument_with_precision("BTCUSD-PERP", 2, 3);
+        let ts_init = UnixNanos::default();
+
+        let bar = parse_candle_bar(&candle, &instrument, ts_init).unwrap();
+
+        assert_eq!(bar.open.as_f64(), 49500.00);
+        assert_eq!(bar.high.as_f64(), 50500.00);
+        assert_eq!(bar.low.as_f64(), 49000.00);
+        assert_eq!(bar.close.as_f64(), 50000.00);
+        assert_eq!(bar.volume.as_f64(), 5000.0);
+        assert_eq!(bar.bar_type.instrument_id().symbol.as_str(), "BTCUSD-PERP");
     }
 }

@@ -48,18 +48,12 @@ use ustr::Ustr;
 use super::{
     handler::BinanceSpotWsFeedHandler,
     messages::{HandlerCommand, NautilusWsMessage},
-    streams::MAX_STREAMS_PER_CONNECTION,
+    subscription::MAX_STREAMS_PER_CONNECTION,
 };
 use crate::{
-    common::credential::Ed25519Credential,
+    common::{consts::BINANCE_SPOT_SBE_WS_URL, credential::Ed25519Credential},
     websocket::error::{BinanceWsError, BinanceWsResult},
 };
-
-/// SBE stream endpoint.
-pub const SBE_STREAM_URL: &str = "wss://stream-sbe.binance.com/ws";
-
-/// SBE stream testnet endpoint.
-pub const SBE_STREAM_TESTNET_URL: &str = "wss://testnet.binance.vision/ws-api/v3";
 
 /// Binance Spot WebSocket client for SBE market data streams.
 #[derive(Clone)]
@@ -113,7 +107,7 @@ impl BinanceSpotWebSocketClient {
         api_secret: Option<String>,
         heartbeat: Option<u64>,
     ) -> anyhow::Result<Self> {
-        let url = url.unwrap_or(SBE_STREAM_URL.to_string());
+        let url = url.unwrap_or(BINANCE_SPOT_SBE_WS_URL.to_string());
 
         let credential = match (api_key, api_secret) {
             (Some(key), Some(secret)) => Some(Arc::new(Ed25519Credential::new(key, &secret)?)),
@@ -171,6 +165,7 @@ impl BinanceSpotWebSocketClient {
     /// Panics if the internal output receiver mutex is poisoned.
     pub async fn connect(&mut self) -> BinanceWsResult<()> {
         self.signal.store(false, Ordering::Relaxed);
+        self.cancellation_token = CancellationToken::new();
 
         let (raw_handler, raw_rx) = channel_message_handler();
         let ping_handler: PingHandler = Arc::new(move |_| {});
@@ -253,13 +248,13 @@ impl BinanceSpotWebSocketClient {
             loop {
                 tokio::select! {
                     _ = cancellation_token.cancelled() => {
-                        tracing::debug!("Handler task cancelled");
+                        log::debug!("Handler task cancelled");
                         break;
                     }
                     result = handler.next() => {
                         match result {
                             Some(NautilusWsMessage::Reconnected) => {
-                                tracing::info!("WebSocket reconnected, restoring subscriptions");
+                                log::info!("WebSocket reconnected, restoring subscriptions");
                                 // Mark all confirmed subscriptions as pending
                                 let all_topics = subscriptions_state.all_topics();
                                 for topic in &all_topics {
@@ -270,25 +265,25 @@ impl BinanceSpotWebSocketClient {
                                 let streams = subscriptions_state.all_topics();
                                 if !streams.is_empty()
                                     && let Err(e) = cmd_tx.read().await.send(HandlerCommand::Subscribe { streams }) {
-                                        tracing::error!(error = %e, "Failed to resubscribe after reconnect");
+                                        log::error!("Failed to resubscribe after reconnect: {e}");
                                     }
 
                                 if out_tx.send(NautilusWsMessage::Reconnected).is_err() {
-                                    tracing::debug!("Output channel closed");
+                                    log::debug!("Output channel closed");
                                     break;
                                 }
                             }
                             Some(msg) => {
                                 if out_tx.send(msg).is_err() {
-                                    tracing::debug!("Output channel closed");
+                                    log::debug!("Output channel closed");
                                     break;
                                 }
                             }
                             None => {
                                 if signal.load(Ordering::Relaxed) {
-                                    tracing::debug!("Handler received shutdown signal");
+                                    log::debug!("Handler received shutdown signal");
                                 } else {
-                                    tracing::warn!("Handler loop ended unexpectedly");
+                                    log::warn!("Handler loop ended unexpectedly");
                                 }
                                 break;
                             }
@@ -300,7 +295,7 @@ impl BinanceSpotWebSocketClient {
 
         self.task_handle = Some(Arc::new(task_handle));
 
-        tracing::info!(url = %self.url, "Connected to Binance Spot SBE stream");
+        log::info!("Connected to Binance Spot SBE stream: url={}", self.url);
         Ok(())
     }
 
@@ -327,7 +322,7 @@ impl BinanceSpotWebSocketClient {
 
         *self.out_rx.lock().expect("out_rx lock poisoned") = None;
 
-        tracing::info!("Disconnected from Binance Spot SBE stream");
+        log::info!("Disconnected from Binance Spot SBE stream");
         Ok(())
     }
 
