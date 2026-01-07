@@ -754,6 +754,7 @@ impl PyStrategy {
 
     /// 仅在调用者保证单线程可变访问时安全
     #[inline]
+    #[allow(unsafe_code)]
     pub fn into_inner(self) -> PyStrategyInner {
         Rc::try_unwrap(self.inner)
             .ok()
