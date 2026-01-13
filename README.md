@@ -405,7 +405,8 @@ It's possible to install from source using pip if you first install the build de
     ```bash
     git clone --branch develop --depth 1 https://github.com/nautechsystems/nautilus_trader
     cd nautilus_trader
-    uv sync --all-extras
+    
+   
     ```
 
 > [!NOTE]
@@ -526,7 +527,8 @@ See the [Developer Guide](https://nautilustrader.io/docs/latest/developer_guide/
 
 > [!TIP]
 >
-> Run `make build-debug` to compile after changes to Rust or Cython code for the most efficient development workflow.
+> Run `make 
+> -debug` to compile after changes to Rust or Cython code for the most efficient development workflow.
 
 ### Testing with Rust
 
