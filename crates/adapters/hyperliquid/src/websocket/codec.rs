@@ -309,7 +309,7 @@ pub struct WsUserEvent {
 }
 
 fn serialize_decimal<S: Serializer>(d: &Decimal, s: S) -> Result<S::Ok, S::Error> {
-    s.serialize_str(&d.normalize().to_string())
+    s.serialize_str(&d.to_string())
 }
 
 fn deserialize_decimal<'de, D: Deserializer<'de>>(d: D) -> Result<Decimal, D::Error> {
@@ -531,7 +531,7 @@ pub fn decode_inbound(msg: &HyperliquidWsMessage) -> WsInbound {
                 WsInbound::Candle(vec![candle])
             }
             Err(e) => {
-                tracing::error!("Failed to parse candle interval '{}': {}", data.i, e);
+                log::error!("Failed to parse candle interval '{}': {}", data.i, e);
                 WsInbound::Unknown
             }
         },

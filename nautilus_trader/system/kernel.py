@@ -196,9 +196,6 @@ class NautilusKernel:
                 if logging.use_pyo3:
                     set_logging_pyo3(True)
 
-                    # Initialize tracing for async Rust
-                    nautilus_pyo3.init_tracing()
-
                     # Initialize logging for sync Rust and Python
                     self._log_guard = nautilus_pyo3.init_logging(
                         trader_id=nautilus_pyo3.TraderId(self._trader_id.value),
@@ -1054,7 +1051,7 @@ class NautilusKernel:
 
         self._stop_engines()
         self._cancel_timers()
-        self._flush_writer()
+        self._close_writer()
 
         self._log.info("STOPPED")
         self._is_running = False
@@ -1095,7 +1092,7 @@ class NautilusKernel:
 
         self._stop_engines()
         self._cancel_timers()
-        self._flush_writer()
+        self._close_writer()
 
         self._log.info("STOPPED")
         self._is_running = False
@@ -1442,3 +1439,7 @@ class NautilusKernel:
     def _flush_writer(self) -> None:
         if self._writer is not None:
             self._writer.flush()
+
+    def _close_writer(self) -> None:
+        if self._writer is not None:
+            self._writer.close()

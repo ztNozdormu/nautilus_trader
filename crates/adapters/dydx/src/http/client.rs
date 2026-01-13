@@ -79,6 +79,7 @@ use nautilus_network::{
     ratelimiter::quota::Quota,
     retry::{RetryConfig, RetryManager},
 };
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio_util::sync::CancellationToken;
 use ustr::Ustr;
@@ -175,7 +176,6 @@ impl DydxRawHttpClient {
 
         let retry_manager = RetryManager::new(retry_config.unwrap_or_default());
 
-        // Build headers
         let mut headers = HashMap::new();
         headers.insert(USER_AGENT.to_string(), NAUTILUS_USER_AGENT.to_string());
 
@@ -253,7 +253,6 @@ impl DydxRawHttpClient {
                 .await
                 .map_err(|e| DydxHttpError::HttpClientError(e.to_string()))?;
 
-            // Check for HTTP errors
             if !request.status.is_success() {
                 return Err(DydxHttpError::HttpStatus {
                     status: request.status.as_u16(),
@@ -284,7 +283,6 @@ impl DydxRawHttpClient {
             }
         };
 
-        // Execute request with retry logic
         let response = self
             .retry_manager
             .execute_with_retry_with_cancel(
@@ -296,7 +294,6 @@ impl DydxRawHttpClient {
             )
             .await?;
 
-        // Deserialize response
         serde_json::from_slice(&response.body).map_err(|e| DydxHttpError::Deserialization {
             error: e.to_string(),
             body: String::from_utf8_lossy(&response.body).to_string(),
@@ -345,7 +342,6 @@ impl DydxRawHttpClient {
                 .await
                 .map_err(|e| DydxHttpError::HttpClientError(e.to_string()))?;
 
-            // Check for HTTP errors
             if !request.status.is_success() {
                 return Err(DydxHttpError::HttpStatus {
                     status: request.status.as_u16(),
@@ -373,7 +369,6 @@ impl DydxRawHttpClient {
             }
         };
 
-        // Execute request with retry logic
         let response = self
             .retry_manager
             .execute_with_retry_with_cancel(
@@ -385,7 +380,6 @@ impl DydxRawHttpClient {
             )
             .await?;
 
-        // Deserialize response
         serde_json::from_slice(&response.body).map_err(|e| DydxHttpError::Deserialization {
             error: e.to_string(),
             body: String::from_utf8_lossy(&response.body).to_string(),
@@ -416,11 +410,9 @@ impl DydxRawHttpClient {
     ///
     pub async fn fetch_instruments(
         &self,
-        maker_fee: Option<rust_decimal::Decimal>,
-        taker_fee: Option<rust_decimal::Decimal>,
+        maker_fee: Option<Decimal>,
+        taker_fee: Option<Decimal>,
     ) -> Result<Vec<InstrumentAny>, DydxHttpError> {
-        use nautilus_core::time::get_atomic_clock_realtime;
-
         let markets_response = self.get_markets().await?;
         let ts_init = get_atomic_clock_realtime().get_time_ns();
 
@@ -429,7 +421,7 @@ impl DydxRawHttpClient {
 
         for (ticker, market) in markets_response.markets {
             if !super::parse::is_market_active(&market.status) {
-                tracing::debug!(
+                log::debug!(
                     "Skipping inactive market {ticker} (status: {:?})",
                     market.status
                 );
@@ -442,19 +434,19 @@ impl DydxRawHttpClient {
                     instruments.push(instrument);
                 }
                 Err(e) => {
-                    tracing::error!("Failed to parse instrument {ticker}: {e}");
+                    log::error!("Failed to parse instrument {ticker}: {e}");
                 }
             }
         }
 
         if skipped_inactive > 0 {
-            tracing::info!(
+            log::info!(
                 "Parsed {} instruments, skipped {} inactive",
                 instruments.len(),
                 skipped_inactive
             );
         } else {
-            tracing::info!("Parsed {} instruments", instruments.len());
+            log::info!("Parsed {} instruments", instruments.len());
         }
 
         Ok(instruments)
@@ -503,7 +495,7 @@ impl DydxRawHttpClient {
         to_iso: Option<DateTime<Utc>>,
     ) -> Result<super::models::CandlesResponse, DydxHttpError> {
         let endpoint = format!("/v4/candles/perpetualMarkets/{ticker}");
-        let mut query_parts = vec![format!("resolution={}", resolution)];
+        let mut query_parts = vec![format!("resolution={resolution}")];
         if let Some(l) = limit {
             query_parts.push(format!("limit={l}"));
         }
@@ -739,11 +731,9 @@ impl DydxHttpClient {
     pub async fn request_instruments(
         &self,
         symbol: Option<String>,
-        maker_fee: Option<rust_decimal::Decimal>,
-        taker_fee: Option<rust_decimal::Decimal>,
+        maker_fee: Option<Decimal>,
+        taker_fee: Option<Decimal>,
     ) -> anyhow::Result<Vec<InstrumentAny>> {
-        use nautilus_core::time::get_atomic_clock_realtime;
-
         let markets_response = self.inner.get_markets().await?;
         let ts_init = get_atomic_clock_realtime().get_time_ns();
 
@@ -759,7 +749,7 @@ impl DydxHttpClient {
             }
 
             if !super::parse::is_market_active(&market.status) {
-                tracing::debug!(
+                log::debug!(
                     "Skipping inactive market {ticker} (status: {:?})",
                     market.status
                 );
@@ -772,19 +762,19 @@ impl DydxHttpClient {
                     instruments.push(instrument);
                 }
                 Err(e) => {
-                    tracing::error!("Failed to parse instrument {ticker}: {e}");
+                    log::error!("Failed to parse instrument {ticker}: {e}");
                 }
             }
         }
 
         if skipped_inactive > 0 {
-            tracing::info!(
+            log::info!(
                 "Parsed {} instruments, skipped {} inactive",
                 instruments.len(),
                 skipped_inactive
             );
         } else {
-            tracing::debug!("Parsed {} instruments", instruments.len());
+            log::debug!("Parsed {} instruments", instruments.len());
         }
 
         Ok(instruments)
@@ -802,8 +792,6 @@ impl DydxHttpClient {
     ///
     /// Returns an error if the HTTP request fails.
     pub async fn fetch_and_cache_instruments(&self) -> anyhow::Result<()> {
-        use nautilus_core::time::get_atomic_clock_realtime;
-
         // Fetch first - preserve existing cache on network failure
         let markets_response = self.inner.get_markets().await?;
         let ts_init = get_atomic_clock_realtime().get_time_ns();
@@ -814,7 +802,7 @@ impl DydxHttpClient {
 
         for (ticker, market) in markets_response.markets {
             if !super::parse::is_market_active(&market.status) {
-                tracing::debug!(
+                log::debug!(
                     "Skipping inactive market {ticker} (status: {:?})",
                     market.status
                 );
@@ -828,7 +816,7 @@ impl DydxHttpClient {
                     parsed_markets.push(market);
                 }
                 Err(e) => {
-                    tracing::error!("Failed to parse instrument {ticker}: {e}");
+                    log::error!("Failed to parse instrument {ticker}: {e}");
                 }
             }
         }
@@ -852,13 +840,13 @@ impl DydxHttpClient {
         }
 
         if skipped_inactive > 0 {
-            tracing::info!(
+            log::info!(
                 "Cached {} instruments, skipped {} inactive",
                 parsed_instruments.len(),
                 skipped_inactive
             );
         } else {
-            tracing::info!("Cached {} instruments", parsed_instruments.len());
+            log::info!("Cached {} instruments", parsed_instruments.len());
         }
 
         Ok(())
@@ -1242,7 +1230,7 @@ impl DydxHttpClient {
             let instrument = match self.get_instrument_by_clob_id(order.clob_pair_id) {
                 Some(inst) => inst,
                 None => {
-                    tracing::warn!(
+                    log::warn!(
                         "Skipping order {}: no cached instrument for clob_pair_id {}",
                         order.id,
                         order.clob_pair_id
@@ -1260,7 +1248,7 @@ impl DydxHttpClient {
             {
                 Ok(report) => reports.push(report),
                 Err(e) => {
-                    tracing::warn!("Failed to parse order {}: {e}", order.id);
+                    log::warn!("Failed to parse order {}: {e}", order.id);
                 }
             }
         }
@@ -1305,7 +1293,7 @@ impl DydxHttpClient {
             let instrument = match self.get_instrument(&symbol) {
                 Some(inst) => inst,
                 None => {
-                    tracing::warn!(
+                    log::warn!(
                         "Skipping fill {}: no cached instrument for market {}",
                         fill.id,
                         fill.market
@@ -1322,7 +1310,7 @@ impl DydxHttpClient {
             match super::parse::parse_fill_report(&fill, &instrument, account_id, ts_init) {
                 Ok(report) => reports.push(report),
                 Err(e) => {
-                    tracing::warn!("Failed to parse fill {}: {e}", fill.id);
+                    log::warn!("Failed to parse fill {}: {e}", fill.id);
                 }
             }
         }
@@ -1360,10 +1348,7 @@ impl DydxHttpClient {
             let instrument = match self.get_instrument(&symbol) {
                 Some(inst) => inst,
                 None => {
-                    tracing::warn!(
-                        "Skipping position: no cached instrument for market {}",
-                        market
-                    );
+                    log::warn!("Skipping position: no cached instrument for market {market}");
                     continue;
                 }
             };
@@ -1381,7 +1366,7 @@ impl DydxHttpClient {
             ) {
                 Ok(report) => reports.push(report),
                 Err(e) => {
-                    tracing::warn!("Failed to parse position for {}: {e}", market);
+                    log::warn!("Failed to parse position for {market}: {e}");
                 }
             }
         }

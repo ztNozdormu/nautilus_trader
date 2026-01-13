@@ -154,8 +154,6 @@ impl DydxWebSocketClient {
     /// Creates a new public WebSocket client for market data.
     #[must_use]
     pub fn new_public(url: String, _heartbeat: Option<u64>) -> Self {
-        use std::sync::atomic::AtomicU8;
-
         // Create dummy command channel (will be replaced on connect)
         let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel::<HandlerCommand>();
 
@@ -186,8 +184,6 @@ impl DydxWebSocketClient {
         account_id: AccountId,
         _heartbeat: Option<u64>,
     ) -> Self {
-        use std::sync::atomic::AtomicU8;
-
         // Create dummy command channel (will be replaced on connect)
         let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel::<HandlerCommand>();
 
@@ -264,7 +260,7 @@ impl DydxWebSocketClient {
         if let Ok(cmd_tx) = self.cmd_tx.try_read()
             && let Err(e) = cmd_tx.send(HandlerCommand::UpdateInstrument(Box::new(instrument)))
         {
-            tracing::debug!("Failed to send UpdateInstrument command to handler: {e}");
+            log::debug!("Failed to send UpdateInstrument command to handler: {e}");
         }
     }
 
@@ -272,6 +268,10 @@ impl DydxWebSocketClient {
     ///
     /// Any existing instruments with the same IDs will be replaced.
     pub fn cache_instruments(&self, instruments: Vec<InstrumentAny>) {
+        log::debug!(
+            "Caching {} instruments in WebSocket client",
+            instruments.len()
+        );
         for instrument in &instruments {
             self.instruments_cache
                 .insert(instrument.id().symbol.inner(), instrument.clone());
@@ -283,7 +283,7 @@ impl DydxWebSocketClient {
             && let Ok(cmd_tx) = self.cmd_tx.try_read()
             && let Err(e) = cmd_tx.send(HandlerCommand::InitializeInstruments(instruments))
         {
-            tracing::debug!("Failed to send InitializeInstruments command to handler: {e}");
+            log::debug!("Failed to send InitializeInstruments command to handler: {e}");
         }
     }
 
@@ -366,17 +366,23 @@ impl DydxWebSocketClient {
         self.out_rx = Some(out_rx);
 
         // Replay cached instruments to the new handler
-        if !self.instruments_cache.is_empty() {
+        if self.instruments_cache.is_empty() {
+            log::warn!("No cached instruments to replay to WebSocket handler");
+        } else {
             let cached_instruments: Vec<InstrumentAny> = self
                 .instruments_cache
                 .iter()
                 .map(|entry| entry.value().clone())
                 .collect();
+            log::debug!(
+                "Replaying {} cached instruments to WebSocket handler",
+                cached_instruments.len()
+            );
             let cmd_tx_guard = self.cmd_tx.read().await;
             if let Err(e) =
                 cmd_tx_guard.send(HandlerCommand::InitializeInstruments(cached_instruments))
             {
-                tracing::error!("Failed to replay instruments to handler: {e}");
+                log::error!("Failed to replay instruments to handler: {e}");
             }
         }
 
@@ -399,7 +405,7 @@ impl DydxWebSocketClient {
         });
 
         self.handler_task = Some(handler_task);
-        tracing::info!("Connected dYdX WebSocket: {}", self.url);
+        log::info!("Connected dYdX WebSocket: {}", self.url);
         Ok(())
     }
 
@@ -425,7 +431,7 @@ impl DydxWebSocketClient {
         // Drop receiver to stop any consumers
         self.out_rx = None;
 
-        tracing::info!("Disconnected dYdX WebSocket");
+        log::info!("Disconnected dYdX WebSocket");
         Ok(())
     }
 

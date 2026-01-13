@@ -17,9 +17,12 @@
 
 use std::{any::Any, cell::RefCell, rc::Rc};
 
-use nautilus_common::{cache::Cache, clock::Clock};
-use nautilus_data::client::DataClient;
-use nautilus_execution::client::{ExecutionClient, base::ExecutionClientCore};
+use nautilus_common::{
+    cache::Cache,
+    clients::{DataClient, ExecutionClient},
+    clock::Clock,
+};
+use nautilus_live::ExecutionClientCore;
 use nautilus_model::{
     enums::{AccountType, OmsType},
     identifiers::ClientId,
@@ -120,7 +123,7 @@ impl DataClientFactory for DydxDataClientFactory {
 
         let ws_client = DydxWebSocketClient::new_public(ws_url, Some(20));
 
-        let client = DydxDataClient::new(client_id, dydx_config, http_client, Some(ws_client))?;
+        let client = DydxDataClient::new(client_id, dydx_config, http_client, ws_client)?;
         Ok(Box::new(client))
     }
 

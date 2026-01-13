@@ -25,6 +25,7 @@ use anyhow::Context;
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use nautilus_common::{
+    clients::DataClient,
     live::{runner::get_data_event_sender, runtime::get_runtime},
     log_info,
     messages::{
@@ -45,7 +46,6 @@ use nautilus_core::{
     datetime::datetime_to_unix_nanos,
     time::{AtomicTime, get_atomic_clock_realtime},
 };
-use nautilus_data::client::DataClient;
 use nautilus_model::{
     data::{Data, OrderBookDeltas_API},
     identifiers::{ClientId, InstrumentId, Venue},
@@ -65,7 +65,8 @@ use crate::{
         models::{DeribitCurrency, DeribitInstrumentKind},
     },
     websocket::{
-        client::DeribitWebSocketClient, enums::DeribitUpdateInterval, messages::NautilusWsMessage,
+        auth::DERIBIT_DATA_SESSION_NAME, client::DeribitWebSocketClient,
+        enums::DeribitUpdateInterval, messages::NautilusWsMessage,
     },
 };
 
@@ -164,13 +165,13 @@ impl DeribitDataClient {
                         match maybe_msg {
                             Some(msg) => Self::handle_ws_message(msg, &data_sender, &instruments),
                             None => {
-                                tracing::debug!("Deribit websocket stream ended");
+                                log::debug!("Deribit websocket stream ended");
                                 break;
                             }
                         }
                     }
-                    _ = cancellation.cancelled() => {
-                        tracing::debug!("Deribit websocket stream task cancelled");
+                    () = cancellation.cancelled() => {
+                        log::debug!("Deribit websocket stream task cancelled");
                         break;
                     }
                 }
@@ -204,38 +205,90 @@ impl DeribitDataClient {
                     drop(guard);
 
                     if let Err(e) = sender.send(DataEvent::Instrument(instrument_any)) {
-                        tracing::warn!("Failed to send instrument update: {e}");
+                        log::warn!("Failed to send instrument update: {e}");
                     }
                 } else {
-                    tracing::error!("Instrument cache lock poisoned, skipping instrument update");
+                    log::error!("Instrument cache lock poisoned, skipping instrument update");
                 }
             }
             NautilusWsMessage::Error(e) => {
-                tracing::error!("Deribit WebSocket error: {e:?}");
+                log::error!("Deribit WebSocket error: {e:?}");
             }
             NautilusWsMessage::Raw(value) => {
-                tracing::debug!("Unhandled raw message: {value}");
+                log::debug!("Unhandled raw message: {value}");
             }
             NautilusWsMessage::Reconnected => {
-                tracing::info!("Deribit websocket reconnected");
+                log::info!("Deribit websocket reconnected");
             }
             NautilusWsMessage::Authenticated(auth) => {
-                tracing::debug!(
+                log::debug!(
                     "Deribit websocket authenticated: expires_in={}s",
                     auth.expires_in
                 );
             }
             NautilusWsMessage::FundingRates(funding_rates) => {
-                tracing::info!(
+                log::info!(
                     "Received {} funding rate update(s) from WebSocket",
                     funding_rates.len()
                 );
                 for funding_rate in funding_rates {
-                    tracing::debug!("Sending funding rate: {:?}", funding_rate);
+                    log::debug!("Sending funding rate: {funding_rate:?}");
                     if let Err(e) = sender.send(DataEvent::FundingRate(funding_rate)) {
-                        tracing::error!("Failed to send funding rate: {e}");
+                        log::error!("Failed to send funding rate: {e}");
                     }
                 }
+            }
+            NautilusWsMessage::OrderStatusReports(reports) => {
+                log::warn!(
+                    "Data client received OrderStatusReports message (should be handled by execution client): {} reports",
+                    reports.len()
+                );
+            }
+            NautilusWsMessage::FillReports(reports) => {
+                log::warn!(
+                    "Data client received FillReports message (should be handled by execution client): {} reports",
+                    reports.len()
+                );
+            }
+            NautilusWsMessage::OrderRejected(order) => {
+                log::warn!(
+                    "Data client received OrderRejected message (should be handled by execution client): {order:?}"
+                );
+            }
+            NautilusWsMessage::OrderAccepted(order) => {
+                log::warn!(
+                    "Data client received OrderAccepted message (should be handled by execution client): {order:?}"
+                );
+            }
+            NautilusWsMessage::OrderCanceled(order) => {
+                log::warn!(
+                    "Data client received OrderCanceled message (should be handled by execution client): {order:?}"
+                );
+            }
+            NautilusWsMessage::OrderExpired(order) => {
+                log::warn!(
+                    "Data client received OrderExpired message (should be handled by execution client): {order:?}"
+                );
+            }
+            NautilusWsMessage::OrderUpdated(order) => {
+                log::warn!(
+                    "Data client received OrderUpdated message (should be handled by execution client): {order:?}"
+                );
+            }
+            NautilusWsMessage::OrderCancelRejected(order) => {
+                log::warn!(
+                    "Data client received OrderCancelRejected message (should be handled by execution client): {order:?}"
+                );
+            }
+            NautilusWsMessage::OrderModifyRejected(order) => {
+                log::warn!(
+                    "Data client received OrderModifyRejected message (should be handled by execution client): {order:?}"
+                );
+            }
+            NautilusWsMessage::AccountState(state) => {
+                log::warn!(
+                    "Data client received AccountState message (should be handled by execution client): {state:?}"
+                );
             }
         }
     }
@@ -243,7 +296,7 @@ impl DeribitDataClient {
     /// Sends data to the data channel.
     fn send_data(sender: &tokio::sync::mpsc::UnboundedSender<DataEvent>, data: Data) {
         if let Err(e) = sender.send(DataEvent::Data(data)) {
-            tracing::error!("Failed to send data: {e}");
+            log::error!("Failed to send data: {e}");
         }
     }
 }
@@ -259,23 +312,23 @@ impl DataClient for DeribitDataClient {
     }
 
     fn start(&mut self) -> anyhow::Result<()> {
-        tracing::info!(
-            client_id = %self.client_id,
-            use_testnet = %self.config.use_testnet,
-            "Starting Deribit data client"
+        log::info!(
+            "Starting Deribit data client: client_id={}, use_testnet={}",
+            self.client_id,
+            self.config.use_testnet
         );
         Ok(())
     }
 
     fn stop(&mut self) -> anyhow::Result<()> {
-        tracing::info!("Stopping Deribit data client: {}", self.client_id);
+        log::info!("Stopping Deribit data client: {}", self.client_id);
         self.cancellation_token.cancel();
         self.is_connected.store(false, Ordering::Relaxed);
         Ok(())
     }
 
     fn reset(&mut self) -> anyhow::Result<()> {
-        tracing::info!("Resetting Deribit data client: {}", self.client_id);
+        log::info!("Resetting Deribit data client: {}", self.client_id);
         self.is_connected.store(false, Ordering::Relaxed);
         self.cancellation_token = CancellationToken::new();
         self.tasks.clear();
@@ -286,7 +339,7 @@ impl DataClient for DeribitDataClient {
     }
 
     fn dispose(&mut self) -> anyhow::Result<()> {
-        tracing::info!("Disposing Deribit data client: {}", self.client_id);
+        log::info!("Disposing Deribit data client: {}", self.client_id);
         self.stop()
     }
 
@@ -334,10 +387,10 @@ impl DataClient for DeribitDataClient {
             all_instruments.extend(fetched);
         }
 
-        tracing::info!(
-            client_id = %self.client_id,
-            total = all_instruments.len(),
-            "Cached instruments"
+        log::info!(
+            "Cached instruments: client_id={}, total={}",
+            self.client_id,
+            all_instruments.len()
         );
 
         for instrument in &all_instruments {
@@ -345,7 +398,7 @@ impl DataClient for DeribitDataClient {
                 .data_sender
                 .send(DataEvent::Instrument(instrument.clone()))
             {
-                tracing::warn!("Failed to send instrument: {e}");
+                log::warn!("Failed to send instrument: {e}");
             }
         }
 
@@ -363,7 +416,7 @@ impl DataClient for DeribitDataClient {
 
         // Authenticate if credentials are configured (required for raw streams)
         if ws.has_credentials() {
-            ws.authenticate_session()
+            ws.authenticate_session(DERIBIT_DATA_SESSION_NAME)
                 .await
                 .context("failed to authenticate Deribit websocket")?;
             log_info!("Deribit WebSocket authenticated");
@@ -395,13 +448,13 @@ impl DataClient for DeribitDataClient {
         if let Some(ws) = self.ws_client.as_ref()
             && let Err(e) = ws.close().await
         {
-            tracing::warn!("Error while closing Deribit websocket: {e:?}");
+            log::warn!("Error while closing Deribit websocket: {e:?}");
         }
 
         // Wait for all tasks to complete
         for handle in self.tasks.drain(..) {
             if let Err(e) = handle.await {
-                tracing::error!("Error joining websocket task: {e:?}");
+                log::error!("Error joining websocket task: {e:?}");
             }
         }
 
@@ -434,20 +487,11 @@ impl DataClient for DeribitDataClient {
             .ok_or_else(|| anyhow::anyhow!("WebSocket client not initialized"))?
             .clone();
 
-        tracing::info!(
-            "Subscribing to instrument state changes for {}.{}",
-            kind,
-            currency
-        );
+        log::info!("Subscribing to instrument state changes for {kind}.{currency}");
 
         get_runtime().spawn(async move {
             if let Err(e) = ws.subscribe_instrument_state(&kind, &currency).await {
-                tracing::error!(
-                    "Failed to subscribe to instrument state for {}.{}: {}",
-                    kind,
-                    currency,
-                    e
-                );
+                log::error!("Failed to subscribe to instrument state for {kind}.{currency}: {e}");
             }
         });
 
@@ -463,9 +507,8 @@ impl DataClient for DeribitDataClient {
             .read()
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         if !guard.contains_key(&instrument_id) {
-            tracing::warn!(
-                "Instrument {} not in cache - it may have been created after connect()",
-                instrument_id
+            log::warn!(
+                "Instrument {instrument_id} not in cache - it may have been created after connect()"
             );
         }
         drop(guard);
@@ -479,21 +522,14 @@ impl DataClient for DeribitDataClient {
             .ok_or_else(|| anyhow::anyhow!("WebSocket client not initialized"))?
             .clone();
 
-        tracing::info!(
-            "Subscribing to instrument state for {} (channel: {}.{})",
-            instrument_id,
-            kind,
-            currency
+        log::info!(
+            "Subscribing to instrument state for {instrument_id} (channel: {kind}.{currency})"
         );
 
         // Subscribe to broader kind/currency channel (filter in handler)
         get_runtime().spawn(async move {
             if let Err(e) = ws.subscribe_instrument_state(&kind, &currency).await {
-                tracing::error!(
-                    "Failed to subscribe to instrument state for {}: {}",
-                    instrument_id,
-                    e
-                );
+                log::error!("Failed to subscribe to instrument state for {instrument_id}: {e}");
             }
         });
 
@@ -515,7 +551,7 @@ impl DataClient for DeribitDataClient {
             .and_then(|p| p.get("interval"))
             .and_then(|v| v.parse::<DeribitUpdateInterval>().ok());
 
-        tracing::info!(
+        log::info!(
             "Subscribing to book deltas for {} (interval: {}, book_type: {:?})",
             instrument_id,
             interval.map_or("100ms (default)".to_string(), |i| i.to_string()),
@@ -524,11 +560,7 @@ impl DataClient for DeribitDataClient {
 
         get_runtime().spawn(async move {
             if let Err(e) = ws.subscribe_book(instrument_id, interval).await {
-                tracing::error!(
-                    "Failed to subscribe to book deltas for {}: {}",
-                    instrument_id,
-                    e
-                );
+                log::error!("Failed to subscribe to book deltas for {instrument_id}: {e}");
             }
         });
 
@@ -558,7 +590,7 @@ impl DataClient for DeribitDataClient {
             .map_or("none", String::as_str)
             .to_string();
 
-        tracing::info!(
+        log::info!(
             "Subscribing to book depth10 for {} (group: {}, interval: {}, book_type: {:?})",
             instrument_id,
             group,
@@ -571,11 +603,7 @@ impl DataClient for DeribitDataClient {
                 .subscribe_book_grouped(instrument_id, &group, 10, interval)
                 .await
             {
-                tracing::error!(
-                    "Failed to subscribe to book depth10 for {}: {}",
-                    instrument_id,
-                    e
-                );
+                log::error!("Failed to subscribe to book depth10 for {instrument_id}: {e}");
             }
         });
 
@@ -590,11 +618,11 @@ impl DataClient for DeribitDataClient {
             .clone();
         let instrument_id = cmd.instrument_id;
 
-        tracing::info!("Subscribing to quotes for {}", instrument_id);
+        log::info!("Subscribing to quotes for {instrument_id}");
 
         get_runtime().spawn(async move {
             if let Err(e) = ws.subscribe_quotes(instrument_id).await {
-                tracing::error!("Failed to subscribe to quotes for {}: {}", instrument_id, e);
+                log::error!("Failed to subscribe to quotes for {instrument_id}: {e}");
             }
         });
 
@@ -615,7 +643,7 @@ impl DataClient for DeribitDataClient {
             .and_then(|p| p.get("interval"))
             .and_then(|v| v.parse::<DeribitUpdateInterval>().ok());
 
-        tracing::info!(
+        log::info!(
             "Subscribing to trades for {} (interval: {})",
             instrument_id,
             interval.map_or("100ms (default)".to_string(), |i| i.to_string())
@@ -623,7 +651,7 @@ impl DataClient for DeribitDataClient {
 
         get_runtime().spawn(async move {
             if let Err(e) = ws.subscribe_trades(instrument_id, interval).await {
-                tracing::error!("Failed to subscribe to trades for {}: {}", instrument_id, e);
+                log::error!("Failed to subscribe to trades for {instrument_id}: {e}");
             }
         });
 
@@ -644,7 +672,7 @@ impl DataClient for DeribitDataClient {
             .and_then(|p| p.get("interval"))
             .and_then(|v| v.parse::<DeribitUpdateInterval>().ok());
 
-        tracing::info!(
+        log::info!(
             "Subscribing to mark prices for {} (via ticker channel, interval: {})",
             instrument_id,
             interval.map_or("100ms (default)".to_string(), |i| i.to_string())
@@ -652,11 +680,7 @@ impl DataClient for DeribitDataClient {
 
         get_runtime().spawn(async move {
             if let Err(e) = ws.subscribe_ticker(instrument_id, interval).await {
-                tracing::error!(
-                    "Failed to subscribe to mark prices for {}: {}",
-                    instrument_id,
-                    e
-                );
+                log::error!("Failed to subscribe to mark prices for {instrument_id}: {e}");
             }
         });
 
@@ -677,7 +701,7 @@ impl DataClient for DeribitDataClient {
             .and_then(|p| p.get("interval"))
             .and_then(|v| v.parse::<DeribitUpdateInterval>().ok());
 
-        tracing::info!(
+        log::info!(
             "Subscribing to index prices for {} (via ticker channel, interval: {})",
             instrument_id,
             interval.map_or("100ms (default)".to_string(), |i| i.to_string())
@@ -685,11 +709,7 @@ impl DataClient for DeribitDataClient {
 
         get_runtime().spawn(async move {
             if let Err(e) = ws.subscribe_ticker(instrument_id, interval).await {
-                tracing::error!(
-                    "Failed to subscribe to index prices for {}: {}",
-                    instrument_id,
-                    e
-                );
+                log::error!("Failed to subscribe to index prices for {instrument_id}: {e}");
             }
         });
 
@@ -708,9 +728,8 @@ impl DataClient for DeribitDataClient {
             .is_some_and(|inst| matches!(inst, InstrumentAny::CryptoPerpetual(_)));
 
         if !is_perpetual {
-            tracing::warn!(
-                "Funding rates subscription rejected for {}: only available for perpetual instruments.",
-                instrument_id
+            log::warn!(
+                "Funding rates subscription rejected for {instrument_id}: only available for perpetual instruments."
             );
             return Ok(());
         }
@@ -728,7 +747,7 @@ impl DataClient for DeribitDataClient {
             .and_then(|v| v.parse::<DeribitUpdateInterval>().ok());
 
         // Funding rates use the dedicated perpetual channel
-        tracing::info!(
+        log::info!(
             "Subscribing to funding rates for {} (perpetual channel, interval: {})",
             instrument_id,
             interval.map_or("100ms (default)".to_string(), |i| i.to_string())
@@ -739,11 +758,7 @@ impl DataClient for DeribitDataClient {
                 .subscribe_perpetual_interests_rates_updates(instrument_id, interval)
                 .await
             {
-                tracing::error!(
-                    "Failed to subscribe to funding rates for {}: {}",
-                    instrument_id,
-                    e
-                );
+                log::error!("Failed to subscribe to funding rates for {instrument_id}: {e}");
             }
         });
 
@@ -762,7 +777,7 @@ impl DataClient for DeribitDataClient {
 
         get_runtime().spawn(async move {
             if let Err(e) = ws.subscribe_chart(instrument_id, &resolution).await {
-                tracing::error!("Failed to subscribe to bars for {}: {}", instrument_id, e);
+                log::error!("Failed to subscribe to bars for {instrument_id}: {e}");
             }
         });
 
@@ -789,19 +804,12 @@ impl DataClient for DeribitDataClient {
             .ok_or_else(|| anyhow::anyhow!("WebSocket client not initialized"))?
             .clone();
 
-        tracing::info!(
-            "Unsubscribing from instrument state changes for {}.{}",
-            kind,
-            currency
-        );
+        log::info!("Unsubscribing from instrument state changes for {kind}.{currency}");
 
         get_runtime().spawn(async move {
             if let Err(e) = ws.unsubscribe_instrument_state(&kind, &currency).await {
-                tracing::error!(
-                    "Failed to unsubscribe from instrument state for {}.{}: {}",
-                    kind,
-                    currency,
-                    e
+                log::error!(
+                    "Failed to unsubscribe from instrument state for {kind}.{currency}: {e}"
                 );
             }
         });
@@ -821,20 +829,13 @@ impl DataClient for DeribitDataClient {
             .ok_or_else(|| anyhow::anyhow!("WebSocket client not initialized"))?
             .clone();
 
-        tracing::info!(
-            "Unsubscribing from instrument state for {} (channel: {}.{})",
-            instrument_id,
-            kind,
-            currency
+        log::info!(
+            "Unsubscribing from instrument state for {instrument_id} (channel: {kind}.{currency})"
         );
 
         get_runtime().spawn(async move {
             if let Err(e) = ws.unsubscribe_instrument_state(&kind, &currency).await {
-                tracing::error!(
-                    "Failed to unsubscribe from instrument state for {}: {}",
-                    instrument_id,
-                    e
-                );
+                log::error!("Failed to unsubscribe from instrument state for {instrument_id}: {e}");
             }
         });
 
@@ -856,7 +857,7 @@ impl DataClient for DeribitDataClient {
             .and_then(|p| p.get("interval"))
             .and_then(|v| v.parse::<DeribitUpdateInterval>().ok());
 
-        tracing::info!(
+        log::info!(
             "Unsubscribing from book deltas for {} (interval: {})",
             instrument_id,
             interval.map_or("100ms (default)".to_string(), |i| i.to_string())
@@ -864,11 +865,7 @@ impl DataClient for DeribitDataClient {
 
         get_runtime().spawn(async move {
             if let Err(e) = ws.unsubscribe_book(instrument_id, interval).await {
-                tracing::error!(
-                    "Failed to unsubscribe from book deltas for {}: {}",
-                    instrument_id,
-                    e
-                );
+                log::error!("Failed to unsubscribe from book deltas for {instrument_id}: {e}");
             }
         });
 
@@ -898,7 +895,7 @@ impl DataClient for DeribitDataClient {
             .map_or("none", String::as_str)
             .to_string();
 
-        tracing::info!(
+        log::info!(
             "Unsubscribing from book depth10 for {} (group: {}, interval: {})",
             instrument_id,
             group,
@@ -910,11 +907,7 @@ impl DataClient for DeribitDataClient {
                 .unsubscribe_book_grouped(instrument_id, &group, 10, interval)
                 .await
             {
-                tracing::error!(
-                    "Failed to unsubscribe from book depth10 for {}: {}",
-                    instrument_id,
-                    e
-                );
+                log::error!("Failed to unsubscribe from book depth10 for {instrument_id}: {e}");
             }
         });
 
@@ -929,15 +922,11 @@ impl DataClient for DeribitDataClient {
             .clone();
         let instrument_id = cmd.instrument_id;
 
-        tracing::info!("Unsubscribing from quotes for {}", instrument_id);
+        log::info!("Unsubscribing from quotes for {instrument_id}");
 
         get_runtime().spawn(async move {
             if let Err(e) = ws.unsubscribe_quotes(instrument_id).await {
-                tracing::error!(
-                    "Failed to unsubscribe from quotes for {}: {}",
-                    instrument_id,
-                    e
-                );
+                log::error!("Failed to unsubscribe from quotes for {instrument_id}: {e}");
             }
         });
 
@@ -958,7 +947,7 @@ impl DataClient for DeribitDataClient {
             .and_then(|p| p.get("interval"))
             .and_then(|v| v.parse::<DeribitUpdateInterval>().ok());
 
-        tracing::info!(
+        log::info!(
             "Unsubscribing from trades for {} (interval: {})",
             instrument_id,
             interval.map_or("100ms (default)".to_string(), |i| i.to_string())
@@ -966,11 +955,7 @@ impl DataClient for DeribitDataClient {
 
         get_runtime().spawn(async move {
             if let Err(e) = ws.unsubscribe_trades(instrument_id, interval).await {
-                tracing::error!(
-                    "Failed to unsubscribe from trades for {}: {}",
-                    instrument_id,
-                    e
-                );
+                log::error!("Failed to unsubscribe from trades for {instrument_id}: {e}");
             }
         });
 
@@ -991,7 +976,7 @@ impl DataClient for DeribitDataClient {
             .and_then(|p| p.get("interval"))
             .and_then(|v| v.parse::<DeribitUpdateInterval>().ok());
 
-        tracing::info!(
+        log::info!(
             "Unsubscribing from mark prices for {} (via ticker channel, interval: {})",
             instrument_id,
             interval.map_or("100ms (default)".to_string(), |i| i.to_string())
@@ -999,11 +984,7 @@ impl DataClient for DeribitDataClient {
 
         get_runtime().spawn(async move {
             if let Err(e) = ws.unsubscribe_ticker(instrument_id, interval).await {
-                tracing::error!(
-                    "Failed to unsubscribe from mark prices for {}: {}",
-                    instrument_id,
-                    e
-                );
+                log::error!("Failed to unsubscribe from mark prices for {instrument_id}: {e}");
             }
         });
 
@@ -1024,7 +1005,7 @@ impl DataClient for DeribitDataClient {
             .and_then(|p| p.get("interval"))
             .and_then(|v| v.parse::<DeribitUpdateInterval>().ok());
 
-        tracing::info!(
+        log::info!(
             "Unsubscribing from index prices for {} (via ticker channel, interval: {})",
             instrument_id,
             interval.map_or("100ms (default)".to_string(), |i| i.to_string())
@@ -1032,11 +1013,7 @@ impl DataClient for DeribitDataClient {
 
         get_runtime().spawn(async move {
             if let Err(e) = ws.unsubscribe_ticker(instrument_id, interval).await {
-                tracing::error!(
-                    "Failed to unsubscribe from index prices for {}: {}",
-                    instrument_id,
-                    e
-                );
+                log::error!("Failed to unsubscribe from index prices for {instrument_id}: {e}");
             }
         });
 
@@ -1055,9 +1032,8 @@ impl DataClient for DeribitDataClient {
             .is_some_and(|inst| matches!(inst, InstrumentAny::CryptoPerpetual(_)));
 
         if !is_perpetual {
-            tracing::warn!(
-                "Funding rates unsubscription rejected for {}: only available for perpetual instruments.",
-                instrument_id
+            log::warn!(
+                "Funding rates unsubscription rejected for {instrument_id}: only available for perpetual instruments."
             );
             return Ok(());
         }
@@ -1074,7 +1050,7 @@ impl DataClient for DeribitDataClient {
             .and_then(|p| p.get("interval"))
             .and_then(|v| v.parse::<DeribitUpdateInterval>().ok());
 
-        tracing::info!(
+        log::info!(
             "Unsubscribing from funding rates for {} (perpetual channel, interval: {})",
             instrument_id,
             interval.map_or("100ms (default)".to_string(), |i| i.to_string())
@@ -1085,11 +1061,7 @@ impl DataClient for DeribitDataClient {
                 .unsubscribe_perpetual_interest_rates_updates(instrument_id, interval)
                 .await
             {
-                tracing::error!(
-                    "Failed to unsubscribe from funding rates for {}: {}",
-                    instrument_id,
-                    e
-                );
+                log::error!("Failed to unsubscribe from funding rates for {instrument_id}: {e}");
             }
         });
 
@@ -1107,11 +1079,7 @@ impl DataClient for DeribitDataClient {
 
         get_runtime().spawn(async move {
             if let Err(e) = ws.unsubscribe_chart(instrument_id, &resolution).await {
-                tracing::error!(
-                    "Failed to unsubscribe from bars for {}: {}",
-                    instrument_id,
-                    e
-                );
+                log::error!("Failed to unsubscribe from bars for {instrument_id}: {e}");
             }
         });
 
@@ -1120,13 +1088,13 @@ impl DataClient for DeribitDataClient {
 
     fn request_instruments(&self, request: &RequestInstruments) -> anyhow::Result<()> {
         if request.start.is_some() {
-            tracing::warn!(
+            log::warn!(
                 "Requesting instruments for {:?} with specified `start` which has no effect",
                 request.venue
             );
         }
         if request.end.is_some() {
-            tracing::warn!(
+            log::warn!(
                 "Requesting instruments for {:?} with specified `end` which has no effect",
                 request.venue
             );
@@ -1153,14 +1121,14 @@ impl DataClient for DeribitDataClient {
         get_runtime().spawn(async move {
             let mut all_instruments = Vec::new();
             for kind in &instrument_kinds {
-                tracing::debug!("Requesting instruments for currency=ANY, kind={:?}", kind);
+                log::debug!("Requesting instruments for currency=ANY, kind={kind:?}");
 
                 match http_client
                     .request_instruments(DeribitCurrency::ANY, Some(*kind))
                     .await
                 {
                     Ok(instruments) => {
-                        tracing::info!(
+                        log::info!(
                             "Fetched {} instruments for ANY/{:?}",
                             instruments.len(),
                             kind
@@ -1174,7 +1142,7 @@ impl DataClient for DeribitDataClient {
                                         guard.insert(instrument.id(), instrument.clone());
                                     }
                                     Err(e) => {
-                                        tracing::error!(
+                                        log::error!(
                                             "Instrument cache lock poisoned: {e}, skipping cache update"
                                         );
                                     }
@@ -1185,7 +1153,7 @@ impl DataClient for DeribitDataClient {
                         }
                     }
                     Err(e) => {
-                        tracing::error!("Failed to fetch instruments for ANY/{:?}: {:?}", kind, e);
+                        log::error!("Failed to fetch instruments for ANY/{kind:?}: {e:?}");
                     }
                 }
             }
@@ -1203,7 +1171,7 @@ impl DataClient for DeribitDataClient {
             ));
 
             if let Err(e) = sender.send(DataEvent::Response(response)) {
-                tracing::error!("Failed to send instruments response: {}", e);
+                log::error!("Failed to send instruments response: {e}");
             }
         });
 
@@ -1212,13 +1180,13 @@ impl DataClient for DeribitDataClient {
 
     fn request_instrument(&self, request: &RequestInstrument) -> anyhow::Result<()> {
         if request.start.is_some() {
-            tracing::warn!(
+            log::warn!(
                 "Requesting instrument {} with specified `start` which has no effect",
                 request.instrument_id
             );
         }
         if request.end.is_some() {
-            tracing::warn!(
+            log::warn!(
                 "Requesting instrument {} with specified `end` which has no effect",
                 request.instrument_id
             );
@@ -1244,12 +1212,12 @@ impl DataClient for DeribitDataClient {
             )));
 
             if let Err(e) = self.data_sender.send(DataEvent::Response(response)) {
-                tracing::error!("Failed to send instrument response: {}", e);
+                log::error!("Failed to send instrument response: {e}");
             }
             return Ok(());
         }
 
-        tracing::debug!(
+        log::debug!(
             "Instrument {} not in cache, fetching from API",
             request.instrument_id
         );
@@ -1272,7 +1240,7 @@ impl DataClient for DeribitDataClient {
                 .context("failed to request instrument from Deribit")
             {
                 Ok(instrument) => {
-                    tracing::info!("Successfully fetched instrument: {}", instrument_id);
+                    log::info!("Successfully fetched instrument: {instrument_id}");
 
                     // Cache the instrument
                     {
@@ -1295,11 +1263,11 @@ impl DataClient for DeribitDataClient {
                     )));
 
                     if let Err(e) = sender.send(DataEvent::Response(response)) {
-                        tracing::error!("Failed to send instrument response: {}", e);
+                        log::error!("Failed to send instrument response: {e}");
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Instrument request failed for {}: {:?}", instrument_id, e);
+                    log::error!("Instrument request failed for {instrument_id}: {e:?}");
                 }
             }
         });
@@ -1339,10 +1307,10 @@ impl DataClient for DeribitDataClient {
                         params,
                     ));
                     if let Err(e) = sender.send(DataEvent::Response(response)) {
-                        tracing::error!("Failed to send trades response: {e}");
+                        log::error!("Failed to send trades response: {e}");
                     }
                 }
-                Err(e) => tracing::error!("Trades request failed for {}: {:?}", instrument_id, e),
+                Err(e) => log::error!("Trades request failed for {instrument_id}: {e:?}"),
             }
         });
 
@@ -1381,10 +1349,10 @@ impl DataClient for DeribitDataClient {
                         params,
                     ));
                     if let Err(e) = sender.send(DataEvent::Response(response)) {
-                        tracing::error!("Failed to send bars response: {e}");
+                        log::error!("Failed to send bars response: {e}");
                     }
                 }
-                Err(e) => tracing::error!("Bars request failed for {}: {:?}", bar_type, e),
+                Err(e) => log::error!("Bars request failed for {bar_type}: {e:?}"),
             }
         });
 
@@ -1419,15 +1387,11 @@ impl DataClient for DeribitDataClient {
                         params,
                     ));
                     if let Err(e) = sender.send(DataEvent::Response(response)) {
-                        tracing::error!("Failed to send book snapshot response: {e}");
+                        log::error!("Failed to send book snapshot response: {e}");
                     }
                 }
                 Err(e) => {
-                    tracing::error!(
-                        "Book snapshot request failed for {}: {:?}",
-                        instrument_id,
-                        e
-                    );
+                    log::error!("Book snapshot request failed for {instrument_id}: {e:?}");
                 }
             }
         });

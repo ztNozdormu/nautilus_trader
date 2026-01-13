@@ -47,6 +47,7 @@ use anyhow::Context;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use nautilus_common::{
+    clients::ExecutionClient,
     live::{runner::get_exec_event_sender, runtime::get_runtime},
     messages::{
         ExecutionEvent, ExecutionReport as NautilusExecutionReport,
@@ -56,14 +57,16 @@ use nautilus_common::{
             ModifyOrder, QueryAccount, QueryOrder, SubmitOrder, SubmitOrderList,
         },
     },
-    msgbus,
 };
-use nautilus_core::{MUTEX_POISONED, UUID4, UnixNanos};
-use nautilus_execution::client::{ExecutionClient, base::ExecutionClientCore};
+use nautilus_core::{
+    MUTEX_POISONED, UUID4, UnixNanos,
+    time::{AtomicTime, get_atomic_clock_realtime},
+};
+use nautilus_live::ExecutionClientCore;
 use nautilus_model::{
     accounts::AccountAny,
     enums::{OmsType, OrderSide, OrderType, TimeInForce},
-    events::{AccountState, OrderCancelRejected, OrderEventAny, OrderRejected},
+    events::{AccountState, OrderCancelRejected, OrderEventAny, OrderRejected, OrderSubmitted},
     identifiers::{AccountId, ClientId, ClientOrderId, InstrumentId, StrategyId, Venue},
     instruments::{Instrument, InstrumentAny},
     orders::Order,
@@ -79,7 +82,10 @@ use crate::{
     config::DydxAdapterConfig,
     execution::submitter::OrderSubmitter,
     grpc::{DydxGrpcClient, Wallet, types::ChainId},
-    http::client::DydxHttpClient,
+    http::{
+        client::DydxHttpClient,
+        parse::{parse_http_account_state, parse_position_status_report},
+    },
     websocket::{client::DydxWebSocketClient, enums::NautilusWsMessage},
 };
 
@@ -117,11 +123,12 @@ enum ExecutionReport {
 /// consistent behavior across the Nautilus ecosystem.
 #[derive(Debug)]
 pub struct DydxExecutionClient {
+    clock: &'static AtomicTime,
     core: ExecutionClientCore,
     config: DydxAdapterConfig,
     http_client: DydxHttpClient,
     ws_client: DydxWebSocketClient,
-    grpc_client: Arc<tokio::sync::RwLock<DydxGrpcClient>>,
+    grpc_client: Arc<tokio::sync::RwLock<Option<DydxGrpcClient>>>,
     wallet: Arc<tokio::sync::RwLock<Option<Wallet>>>,
     instruments: DashMap<InstrumentId, InstrumentAny>,
     market_to_instrument: DashMap<String, InstrumentId>,
@@ -138,6 +145,7 @@ pub struct DydxExecutionClient {
     instruments_initialized: bool,
     ws_stream_handle: Option<JoinHandle<()>>,
     pending_tasks: Mutex<Vec<JoinHandle<()>>>,
+    exec_event_sender: Option<tokio::sync::mpsc::UnboundedSender<ExecutionEvent>>,
 }
 
 impl DydxExecutionClient {
@@ -184,14 +192,11 @@ impl DydxExecutionClient {
             DydxWebSocketClient::new_public(config.ws_url.clone(), Some(20))
         };
 
-        let grpc_urls = config.get_grpc_urls();
-        let grpc_client = Arc::new(tokio::sync::RwLock::new(
-            get_runtime()
-                .block_on(async { DydxGrpcClient::new_with_fallback(&grpc_urls).await })
-                .context("failed to construct dYdX gRPC client")?,
-        ));
+        // gRPC client is initialized lazily in connect() to avoid blocking
+        let grpc_client = Arc::new(tokio::sync::RwLock::new(None));
 
         Ok(Self {
+            clock: get_atomic_clock_realtime(),
             core,
             config,
             http_client,
@@ -213,6 +218,7 @@ impl DydxExecutionClient {
             instruments_initialized: false,
             ws_stream_handle: None,
             pending_tasks: Mutex::new(Vec::new()),
+            exec_event_sender: None,
         })
     }
 
@@ -236,6 +242,8 @@ impl DydxExecutionClient {
     /// - Atomic counter uses `Relaxed` ordering — uniqueness is required, not cross-thread sequencing
     /// - If dYdX enforces a maximum client ID below u32::MAX, additional range validation is needed
     fn generate_client_order_id_int(&self, client_order_id: &str) -> u32 {
+        use dashmap::mapref::entry::Entry;
+
         // Fast path: already mapped
         if let Some(existing) = self.client_id_to_int.get(client_order_id) {
             return *existing.value();
@@ -251,8 +259,6 @@ impl DydxExecutionClient {
         }
 
         // Allocate new ID from atomic counter
-        use dashmap::mapref::entry::Entry;
-
         match self.client_id_to_int.entry(client_order_id.to_string()) {
             Entry::Occupied(entry) => *entry.get(),
             Entry::Vacant(vacant) => {
@@ -296,9 +302,6 @@ impl DydxExecutionClient {
     /// - `market_to_instrument`: Market ticker (e.g., "BTC-USD") → InstrumentId
     /// - `clob_pair_id_to_instrument`: CLOB pair ID → InstrumentId
     fn cache_instruments_from_http(&mut self) {
-        use nautilus_model::instruments::InstrumentAny;
-
-        // Get all instruments from HTTP client cache
         let instruments: Vec<InstrumentAny> = self
             .http_client
             .instruments_cache
@@ -306,7 +309,7 @@ impl DydxExecutionClient {
             .map(|entry| entry.value().clone())
             .collect();
 
-        tracing::debug!(
+        log::debug!(
             "Caching {} instruments in execution client",
             instruments.len()
         );
@@ -315,10 +318,7 @@ impl DydxExecutionClient {
             let instrument_id = instrument.id();
             let symbol = instrument_id.symbol.as_str();
 
-            // Cache instrument by InstrumentId
             self.instruments.insert(instrument_id, instrument.clone());
-
-            // Cache market ticker → InstrumentId mapping
             self.market_to_instrument
                 .insert(symbol.to_string(), instrument_id);
         }
@@ -332,7 +332,7 @@ impl DydxExecutionClient {
         }
 
         self.instruments_initialized = true;
-        tracing::info!(
+        log::info!(
             "Cached {} instruments ({} CLOB pair IDs) with market mappings",
             self.instruments.len(),
             self.clob_pair_id_to_instrument.len()
@@ -375,11 +375,40 @@ impl DydxExecutionClient {
             })
             .collect();
 
-        tracing::warn!(
-            "Instrument for clob_pair_id {} not found in cache. Known CLOB pair IDs and symbols: {:?}",
-            clob_pair_id,
-            known
+        log::warn!(
+            "Instrument for clob_pair_id {clob_pair_id} not found in cache. Known CLOB pair IDs and symbols: {known:?}"
         );
+    }
+
+    fn send_order_rejected(
+        &self,
+        strategy_id: StrategyId,
+        instrument_id: InstrumentId,
+        client_order_id: ClientOrderId,
+        reason: &str,
+        ts_init: UnixNanos,
+    ) {
+        let ts_now = self.clock.get_time_ns();
+        let event = OrderRejected::new(
+            self.core.trader_id,
+            strategy_id,
+            instrument_id,
+            client_order_id,
+            self.core.account_id,
+            reason.into(),
+            UUID4::new(),
+            ts_init,
+            ts_now,
+            false,
+            false,
+        );
+        if let Some(sender) = &self.exec_event_sender {
+            if let Err(e) = sender.send(ExecutionEvent::Order(OrderEventAny::Rejected(event))) {
+                log::warn!("Failed to send OrderRejected event: {e}");
+            }
+        } else {
+            log::warn!("Cannot send OrderRejected: exec_event_sender not initialized");
+        }
     }
 
     fn spawn_task<F>(&self, label: &'static str, fut: F)
@@ -388,7 +417,7 @@ impl DydxExecutionClient {
     {
         let handle = get_runtime().spawn(async move {
             if let Err(e) = fut.await {
-                tracing::error!("{label}: {e:?}");
+                log::error!("{label}: {e:?}");
             }
         });
 
@@ -419,7 +448,7 @@ impl DydxExecutionClient {
         let handle = get_runtime().spawn(async move {
             if let Err(e) = fut.await {
                 let error_msg = format!("{label} failed: {e:?}");
-                tracing::error!("{}", error_msg);
+                log::error!("{error_msg}");
 
                 let ts_now = UnixNanos::default(); // Use current time
                 let event = OrderRejected::new(
@@ -439,7 +468,7 @@ impl DydxExecutionClient {
                 if let Err(send_err) =
                     sender.send(ExecutionEvent::Order(OrderEventAny::Rejected(event)))
                 {
-                    tracing::error!("Failed to send OrderRejected event: {send_err}");
+                    log::error!("Failed to send OrderRejected event: {send_err}");
                 }
             }
         });
@@ -497,22 +526,22 @@ impl ExecutionClient for DydxExecutionClient {
 
     fn start(&mut self) -> anyhow::Result<()> {
         if self.started {
-            tracing::warn!("dYdX execution client already started");
+            log::warn!("dYdX execution client already started");
             return Ok(());
         }
 
-        tracing::info!("Starting dYdX execution client");
+        log::info!("Starting dYdX execution client");
         self.started = true;
         Ok(())
     }
 
     fn stop(&mut self) -> anyhow::Result<()> {
         if !self.started {
-            tracing::warn!("dYdX execution client not started");
+            log::warn!("dYdX execution client not started");
             return Ok(());
         }
 
-        tracing::info!("Stopping dYdX execution client");
+        log::info!("Stopping dYdX execution client");
         self.abort_pending_tasks();
         self.started = false;
         self.connected = false;
@@ -536,12 +565,12 @@ impl ExecutionClient for DydxExecutionClient {
     /// Validates synchronously, generates OrderSubmitted event, then spawns async task for
     /// gRPC submission to avoid blocking. Unsupported order types generate OrderRejected.
     fn submit_order(&self, cmd: &SubmitOrder) -> anyhow::Result<()> {
-        let order = cmd.order.clone();
+        let order = self.core.get_order(&cmd.client_order_id)?;
 
         // Check connection status
         if !self.is_connected() {
             let reason = "Cannot submit order: execution client not connected";
-            tracing::error!("{}", reason);
+            log::error!("{reason}");
             anyhow::bail!(reason);
         }
 
@@ -549,32 +578,31 @@ impl ExecutionClient for DydxExecutionClient {
         let current_block = self.block_height.load(Ordering::Relaxed);
         if current_block == 0 {
             let reason = "Block height not initialized";
-            tracing::warn!(
+            log::warn!(
                 "Cannot submit order {}: {}",
                 order.client_order_id(),
                 reason
             );
-            self.core.generate_order_rejected(
+            self.send_order_rejected(
                 order.strategy_id(),
                 order.instrument_id(),
                 order.client_order_id(),
                 reason,
                 cmd.ts_init,
-                false,
             );
             return Ok(());
         }
 
         // Check if order is already closed
         if order.is_closed() {
-            tracing::warn!("Cannot submit closed order {}", order.client_order_id());
+            log::warn!("Cannot submit closed order {}", order.client_order_id());
             return Ok(());
         }
 
         // Validate order type
         match order.order_type() {
             OrderType::Market | OrderType::Limit => {
-                tracing::debug!(
+                log::debug!(
                     "Submitting {} order: {}",
                     if matches!(order.order_type(), OrderType::Market) {
                         "MARKET"
@@ -586,7 +614,7 @@ impl ExecutionClient for DydxExecutionClient {
             }
             // Conditional orders (stop/take-profit) - supported by dYdX
             OrderType::StopMarket | OrderType::StopLimit => {
-                tracing::debug!(
+                log::debug!(
                     "Submitting {} order: {}",
                     if matches!(order.order_type(), OrderType::StopMarket) {
                         "STOP_MARKET"
@@ -598,7 +626,7 @@ impl ExecutionClient for DydxExecutionClient {
             }
             // dYdX TakeProfit/TakeProfitLimit map to MarketIfTouched/LimitIfTouched
             OrderType::MarketIfTouched | OrderType::LimitIfTouched => {
-                tracing::debug!(
+                log::debug!(
                     "Submitting {} order: {}",
                     if matches!(order.order_type(), OrderType::MarketIfTouched) {
                         "TAKE_PROFIT_MARKET"
@@ -611,39 +639,48 @@ impl ExecutionClient for DydxExecutionClient {
             // Trailing stops not supported by dYdX v4 protocol
             OrderType::TrailingStopMarket | OrderType::TrailingStopLimit => {
                 let reason = "Trailing stop orders not supported by dYdX v4 protocol";
-                tracing::error!("{}", reason);
-                self.core.generate_order_rejected(
+                log::error!("{reason}");
+                self.send_order_rejected(
                     order.strategy_id(),
                     order.instrument_id(),
                     order.client_order_id(),
                     reason,
                     cmd.ts_init,
-                    false,
                 );
                 return Ok(());
             }
             order_type => {
                 let reason = format!("Order type {order_type:?} not supported by dYdX");
-                tracing::error!("{}", reason);
-                self.core.generate_order_rejected(
+                log::error!("{reason}");
+                self.send_order_rejected(
                     order.strategy_id(),
                     order.instrument_id(),
                     order.client_order_id(),
                     &reason,
                     cmd.ts_init,
-                    false,
                 );
                 return Ok(());
             }
         }
 
-        // Generate OrderSubmitted event immediately
-        self.core.generate_order_submitted(
+        let event = OrderSubmitted::new(
+            self.core.trader_id,
             order.strategy_id(),
             order.instrument_id(),
             order.client_order_id(),
+            self.core.account_id,
+            UUID4::new(),
             cmd.ts_init,
+            self.clock.get_time_ns(),
         );
+        if let Some(sender) = &self.exec_event_sender {
+            log::debug!("OrderSubmitted client_order_id={}", order.client_order_id());
+            if let Err(e) = sender.send(ExecutionEvent::Order(OrderEventAny::Submitted(event))) {
+                log::warn!("Failed to send OrderSubmitted event: {e}");
+            }
+        } else {
+            log::warn!("Cannot send OrderSubmitted: exec_event_sender not initialized");
+        }
 
         let grpc_client = self.grpc_client.clone();
         let wallet = self.wallet.clone();
@@ -673,8 +710,11 @@ impl ExecutionClient for DydxExecutionClient {
                     .ok_or_else(|| anyhow::anyhow!("Wallet not initialized"))?;
 
                 let grpc_guard = grpc_client.read().await;
+                let grpc_ref = grpc_guard
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("gRPC client not initialized"))?;
                 let submitter = OrderSubmitter::new(
-                    (*grpc_guard).clone(),
+                    grpc_ref.clone(),
                     http_client.clone(),
                     wallet_address,
                     subaccount_number,
@@ -682,7 +722,6 @@ impl ExecutionClient for DydxExecutionClient {
                     authenticator_ids,
                 );
 
-                // Submit order based on type
                 match order_clone.order_type() {
                     OrderType::Market => {
                         submitter
@@ -695,7 +734,7 @@ impl ExecutionClient for DydxExecutionClient {
                                 block_height,
                             )
                             .await?;
-                        tracing::info!("Successfully submitted market order: {}", client_order_id);
+                        log::info!("Successfully submitted market order: {client_order_id}");
                     }
                     OrderType::Limit => {
                         let expire_time = order_clone.expire_time().map(nanos_to_secs_i64);
@@ -716,7 +755,7 @@ impl ExecutionClient for DydxExecutionClient {
                                 expire_time,
                             )
                             .await?;
-                        tracing::info!("Successfully submitted limit order: {}", client_order_id);
+                        log::info!("Successfully submitted limit order: {client_order_id}");
                     }
                     OrderType::StopMarket => {
                         let trigger_price = order_clone.trigger_price().ok_or_else(|| {
@@ -735,10 +774,7 @@ impl ExecutionClient for DydxExecutionClient {
                                 expire_time,
                             )
                             .await?;
-                        tracing::info!(
-                            "Successfully submitted stop market order: {}",
-                            client_order_id
-                        );
+                        log::info!("Successfully submitted stop market order: {client_order_id}");
                     }
                     OrderType::StopLimit => {
                         let trigger_price = order_clone.trigger_price().ok_or_else(|| {
@@ -763,10 +799,7 @@ impl ExecutionClient for DydxExecutionClient {
                                 expire_time,
                             )
                             .await?;
-                        tracing::info!(
-                            "Successfully submitted stop limit order: {}",
-                            client_order_id
-                        );
+                        log::info!("Successfully submitted stop limit order: {client_order_id}");
                     }
                     // dYdX TakeProfitMarket maps to Nautilus MarketIfTouched
                     OrderType::MarketIfTouched => {
@@ -786,9 +819,8 @@ impl ExecutionClient for DydxExecutionClient {
                                 expire_time,
                             )
                             .await?;
-                        tracing::info!(
-                            "Successfully submitted take profit market order: {}",
-                            client_order_id
+                        log::info!(
+                            "Successfully submitted take profit market order: {client_order_id}"
                         );
                     }
                     // dYdX TakeProfitLimit maps to Nautilus LimitIfTouched
@@ -815,9 +847,8 @@ impl ExecutionClient for DydxExecutionClient {
                                 expire_time,
                             )
                             .await?;
-                        tracing::info!(
-                            "Successfully submitted take profit limit order: {}",
-                            client_order_id
+                        log::info!(
+                            "Successfully submitted take profit limit order: {client_order_id}"
                         );
                     }
                     _ => unreachable!("Order type already validated"),
@@ -868,17 +899,14 @@ impl ExecutionClient for DydxExecutionClient {
         let order = match cache_borrow.order(&client_order_id) {
             Some(order) => order,
             None => {
-                tracing::error!(
-                    "Cannot cancel order {}: not found in cache",
-                    client_order_id
-                );
+                log::error!("Cannot cancel order {client_order_id}: not found in cache");
                 return Ok(()); // Not an error - order may have been filled/canceled already
             }
         };
 
         // Validate order is not already closed
         if order.is_closed() {
-            tracing::warn!(
+            log::warn!(
                 "CancelOrder command for {} when order already {} (will not send to exchange)",
                 client_order_id,
                 order.status()
@@ -891,16 +919,14 @@ impl ExecutionClient for DydxExecutionClient {
         let instrument = match cache_borrow.instrument(&instrument_id) {
             Some(instrument) => instrument,
             None => {
-                tracing::error!(
-                    "Cannot cancel order {}: instrument {} not found in cache",
-                    client_order_id,
-                    instrument_id
+                log::error!(
+                    "Cannot cancel order {client_order_id}: instrument {instrument_id} not found in cache"
                 );
                 return Ok(()); // Not an error - missing instrument is a cache issue
             }
         };
 
-        tracing::debug!(
+        log::debug!(
             "Cancelling order {} for instrument {}",
             client_order_id,
             instrument.id()
@@ -922,10 +948,13 @@ impl ExecutionClient for DydxExecutionClient {
         let client_id_u32 = match self.get_client_order_id_int(client_order_id.as_str()) {
             Some(id) => id,
             None => {
-                tracing::error!("Client order ID {} not found in cache", client_order_id);
+                log::error!("Client order ID {client_order_id} not found in cache");
                 anyhow::bail!("Client order ID not found in cache")
             }
         };
+
+        // Clone sender before spawning for use in async block
+        let exec_sender = self.exec_event_sender.clone();
 
         self.spawn_task("cancel_order", async move {
             let wallet_guard = wallet.read().await;
@@ -934,8 +963,11 @@ impl ExecutionClient for DydxExecutionClient {
                 .ok_or_else(|| anyhow::anyhow!("Wallet not initialized"))?;
 
             let grpc_guard = grpc_client.read().await;
+            let grpc_ref = grpc_guard
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("gRPC client not initialized"))?;
             let submitter = OrderSubmitter::new(
-                (*grpc_guard).clone(),
+                grpc_ref.clone(),
                 http_client.clone(),
                 wallet_address,
                 subaccount_number,
@@ -948,30 +980,37 @@ impl ExecutionClient for DydxExecutionClient {
                 .cancel_order(wallet_ref, instrument_id, client_id_u32, block_height)
                 .await
             {
-                Ok(_) => {
-                    tracing::info!("Successfully cancelled order: {}", client_order_id);
+                Ok(()) => {
+                    log::info!("Successfully cancelled order: {client_order_id}");
                 }
                 Err(e) => {
-                    tracing::error!("Failed to cancel order {}: {:?}", client_order_id, e);
+                    log::error!("Failed to cancel order {client_order_id}: {e:?}");
 
-                    let sender = get_exec_event_sender();
-                    let ts_now = UnixNanos::default();
-                    let event = OrderCancelRejected::new(
-                        trader_id,
-                        strategy_id,
-                        instrument_id,
-                        client_order_id,
-                        format!("Cancel order failed: {e:?}").into(),
-                        UUID4::new(),
-                        ts_now,
-                        ts_now,
-                        false,
-                        venue_order_id,
-                        None, // account_id not available in async context
-                    );
-                    sender
-                        .send(ExecutionEvent::Order(OrderEventAny::CancelRejected(event)))
-                        .unwrap();
+                    if let Some(sender) = &exec_sender {
+                        let ts_now = UnixNanos::default();
+                        let event = OrderCancelRejected::new(
+                            trader_id,
+                            strategy_id,
+                            instrument_id,
+                            client_order_id,
+                            format!("Cancel order failed: {e:?}").into(),
+                            UUID4::new(),
+                            ts_now,
+                            ts_now,
+                            false,
+                            venue_order_id,
+                            None, // account_id not available in async context
+                        );
+                        if let Err(send_err) =
+                            sender.send(ExecutionEvent::Order(OrderEventAny::CancelRejected(event)))
+                        {
+                            log::warn!("Failed to send OrderCancelRejected event: {send_err}");
+                        }
+                    } else {
+                        log::warn!(
+                            "Cannot send OrderCancelRejected: exec_event_sender not initialized"
+                        );
+                    }
                 }
             }
 
@@ -1019,7 +1058,7 @@ impl ExecutionClient for DydxExecutionClient {
             }
         }
 
-        tracing::info!(
+        log::info!(
             "Cancel all orders: total={}, short_term={}, long_term={}, instrument_id={}, order_side={:?}",
             open_orders.len(),
             short_term_orders.len(),
@@ -1045,9 +1084,8 @@ impl ExecutionClient for DydxExecutionClient {
             if let Some(client_id_u32) = self.get_client_order_id_int(client_order_id.as_str()) {
                 orders_to_cancel.push((instrument_id, client_id_u32));
             } else {
-                tracing::warn!(
-                    "Cannot cancel order {}: client_order_id not found in cache",
-                    client_order_id
+                log::warn!(
+                    "Cannot cancel order {client_order_id}: client_order_id not found in cache"
                 );
             }
         }
@@ -1059,8 +1097,11 @@ impl ExecutionClient for DydxExecutionClient {
                 .ok_or_else(|| anyhow::anyhow!("Wallet not initialized"))?;
 
             let grpc_guard = grpc_client.read().await;
+            let grpc_ref = grpc_guard
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("gRPC client not initialized"))?;
             let submitter = OrderSubmitter::new(
-                (*grpc_guard).clone(),
+                grpc_ref.clone(),
                 http_client.clone(),
                 wallet_address,
                 subaccount_number,
@@ -1073,11 +1114,11 @@ impl ExecutionClient for DydxExecutionClient {
                 .cancel_orders_batch(wallet_ref, &orders_to_cancel, block_height)
                 .await
             {
-                Ok(_) => {
-                    tracing::info!("Successfully cancelled {} orders", orders_to_cancel.len());
+                Ok(()) => {
+                    log::info!("Successfully cancelled {} orders", orders_to_cancel.len());
                 }
                 Err(e) => {
-                    tracing::error!("Batch cancel failed: {:?}", e);
+                    log::error!("Batch cancel failed: {e:?}");
                 }
             }
 
@@ -1103,9 +1144,8 @@ impl ExecutionClient for DydxExecutionClient {
             let client_id_u32 = match self.get_client_order_id_int(client_id_str) {
                 Some(id) => id,
                 None => {
-                    tracing::warn!(
-                        "No u32 mapping found for client_order_id={}, skipping cancel",
-                        client_id_str
+                    log::warn!(
+                        "No u32 mapping found for client_order_id={client_id_str}, skipping cancel"
                     );
                     continue;
                 }
@@ -1114,7 +1154,7 @@ impl ExecutionClient for DydxExecutionClient {
         }
 
         if orders_to_cancel.is_empty() {
-            tracing::warn!("No valid orders to cancel in batch");
+            log::warn!("No valid orders to cancel in batch");
             return Ok(());
         }
 
@@ -1127,7 +1167,7 @@ impl ExecutionClient for DydxExecutionClient {
         let chain_id = self.get_chain_id();
         let authenticator_ids = self.config.authenticator_ids.clone();
 
-        tracing::info!(
+        log::info!(
             "Batch cancelling {} orders: {:?}",
             orders_to_cancel.len(),
             orders_to_cancel
@@ -1140,8 +1180,11 @@ impl ExecutionClient for DydxExecutionClient {
                 .ok_or_else(|| anyhow::anyhow!("Wallet not initialized"))?;
 
             let grpc_guard = grpc_client.read().await;
+            let grpc_ref = grpc_guard
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("gRPC client not initialized"))?;
             let submitter = OrderSubmitter::new(
-                (*grpc_guard).clone(),
+                grpc_ref.clone(),
                 http_client.clone(),
                 wallet_address,
                 subaccount_number,
@@ -1154,13 +1197,13 @@ impl ExecutionClient for DydxExecutionClient {
                 .await
             {
                 Ok(()) => {
-                    tracing::info!(
+                    log::info!(
                         "Successfully batch cancelled {} orders",
                         orders_to_cancel.len()
                     );
                 }
                 Err(e) => {
-                    tracing::error!("Batch cancel failed: {:?}", e);
+                    log::error!("Batch cancel failed: {e:?}");
                 }
             }
 
@@ -1180,17 +1223,21 @@ impl ExecutionClient for DydxExecutionClient {
 
     async fn connect(&mut self) -> anyhow::Result<()> {
         if self.connected {
-            tracing::warn!("dYdX execution client already connected");
+            log::warn!("dYdX execution client already connected");
             return Ok(());
         }
 
-        tracing::info!("Connecting to dYdX");
+        log::info!("Connecting to dYdX");
+
+        if self.exec_event_sender.is_none() {
+            self.exec_event_sender = Some(get_exec_event_sender());
+        }
 
         // Load instruments BEFORE WebSocket connection
         // Per Python implementation: "instruments are used in the first account channel message"
-        tracing::debug!("Loading instruments from HTTP API");
+        log::debug!("Loading instruments from HTTP API");
         self.http_client.fetch_and_cache_instruments().await?;
-        tracing::info!(
+        log::info!(
             "Loaded {} instruments from HTTP",
             self.http_client.instruments_cache.len()
         );
@@ -1198,73 +1245,143 @@ impl ExecutionClient for DydxExecutionClient {
         // Populate execution client's instrument lookup maps
         self.cache_instruments_from_http();
 
+        // Cache instruments to WebSocket client for handler to use
+        let instruments: Vec<InstrumentAny> = self
+            .instruments
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        self.ws_client.cache_instruments(instruments);
+
+        // Initialize gRPC client (deferred from constructor to avoid blocking)
+        let grpc_urls = self.config.get_grpc_urls();
+        let grpc_client = DydxGrpcClient::new_with_fallback(&grpc_urls)
+            .await
+            .context("failed to construct dYdX gRPC client")?;
+        *self.grpc_client.write().await = Some(grpc_client);
+        log::debug!("gRPC client initialized");
+
         // Initialize wallet from config if mnemonic is provided
         if let Some(mnemonic) = &self.config.mnemonic {
             let wallet = Wallet::from_mnemonic(mnemonic)?;
             *self.wallet.write().await = Some(wallet);
-            tracing::debug!("Wallet initialized");
+            log::debug!("Wallet initialized");
         }
 
         // Connect WebSocket
         self.ws_client.connect().await?;
-        tracing::debug!("WebSocket connected");
+        log::debug!("WebSocket connected");
 
         // Subscribe to block height updates
         self.ws_client.subscribe_block_height().await?;
-        tracing::debug!("Subscribed to block height updates");
+        log::debug!("Subscribed to block height updates");
 
         // Subscribe to markets for instrument data
         self.ws_client.subscribe_markets().await?;
-        tracing::debug!("Subscribed to markets");
+        log::debug!("Subscribed to markets");
 
         // Subscribe to subaccount updates if authenticated
         if self.config.mnemonic.is_some() {
             self.ws_client
                 .subscribe_subaccount(&self.wallet_address, self.subaccount_number)
                 .await?;
-            tracing::debug!(
+            log::debug!(
                 "Subscribed to subaccount updates: {}/{}",
                 self.wallet_address,
                 self.subaccount_number
             );
 
+            // Fetch initial account state via HTTP (required before orders can be submitted)
+            log::debug!("Fetching initial account state from HTTP API");
+            let subaccount_response = self
+                .http_client
+                .inner
+                .get_subaccount(&self.wallet_address, self.subaccount_number)
+                .await
+                .context("failed to fetch initial account state")?;
+
+            let inst_map: std::collections::HashMap<_, _> = self
+                .instruments
+                .iter()
+                .map(|entry| (*entry.key(), entry.value().clone()))
+                .collect();
+
+            // Build empty oracle prices map (not available yet during connect)
+            let oracle_map: std::collections::HashMap<_, _> = self
+                .oracle_prices
+                .iter()
+                .map(|entry| (*entry.key(), *entry.value()))
+                .collect();
+
+            let ts_init = self.clock.get_time_ns();
+            let account_state = parse_http_account_state(
+                &subaccount_response.subaccount,
+                self.core.account_id,
+                &inst_map,
+                &oracle_map,
+                ts_init,
+                ts_init,
+            )
+            .context("failed to parse initial account state")?;
+
+            log::info!(
+                "Initial account state: {} balance(s), {} margin(s)",
+                account_state.balances.len(),
+                account_state.margins.len()
+            );
+
+            self.core.generate_account_state(
+                account_state.balances,
+                account_state.margins,
+                account_state.is_reported,
+                ts_init,
+            )?;
+
             // Spawn WebSocket message processing task following standard adapter pattern
             // Per docs/developer_guide/adapters.md: Parse -> Dispatch -> Engine handles events
+            let Some(exec_sender) = self.exec_event_sender.as_ref() else {
+                log::error!("Execution event sender not initialized");
+                anyhow::bail!("Execution event sender not initialized");
+            };
+
             if let Some(mut rx) = self.ws_client.take_receiver() {
+                log::info!("Starting execution WebSocket message processing task");
                 // Clone data needed for account state parsing in spawned task
                 let account_id = self.core.account_id;
                 let instruments = self.instruments.clone();
                 let oracle_prices = self.oracle_prices.clone();
                 let clob_pair_id_to_instrument = self.clob_pair_id_to_instrument.clone();
                 let block_height = self.block_height.clone();
+                let exec_sender = exec_sender.clone();
+                let clock = self.clock;
 
                 let handle = get_runtime().spawn(async move {
+                    log::debug!("Execution WebSocket message loop started");
                     while let Some(msg) = rx.recv().await {
                         match msg {
                             NautilusWsMessage::Order(report) => {
-                                tracing::debug!("Received order update: {:?}", report.order_status);
-                                dispatch_execution_report(ExecutionReport::Order(report));
+                                log::debug!("Received order update: {:?}", report.order_status);
+                                dispatch_execution_report(ExecutionReport::Order(report), &exec_sender);
                             }
                             NautilusWsMessage::Fill(report) => {
-                                tracing::debug!("Received fill update");
-                                dispatch_execution_report(ExecutionReport::Fill(report));
+                                log::debug!("Received fill update");
+                                dispatch_execution_report(ExecutionReport::Fill(report), &exec_sender);
                             }
                             NautilusWsMessage::Position(report) => {
-                                tracing::debug!("Received position update");
+                                log::debug!("Received position update");
                                 // Dispatch position status reports via execution event system
-                                let sender = get_exec_event_sender();
                                 let exec_report =
                                     NautilusExecutionReport::Position(Box::new(*report));
-                                if let Err(e) = sender.send(ExecutionEvent::Report(exec_report)) {
-                                    tracing::warn!("Failed to send position status report: {e}");
+                                if let Err(e) = exec_sender.send(ExecutionEvent::Report(exec_report)) {
+                                    log::warn!("Failed to send position status report: {e}");
                                 }
                             }
                             NautilusWsMessage::AccountState(state) => {
-                                tracing::debug!("Received account state update");
+                                log::debug!("Received account state update");
                                 dispatch_account_state(*state);
                             }
                             NautilusWsMessage::SubaccountSubscribed(msg) => {
-                                tracing::debug!(
+                                log::debug!(
                                     "Parsing subaccount subscription with full context"
                                 );
 
@@ -1280,8 +1397,7 @@ impl ExecutionClient for DydxExecutionClient {
                                     .map(|entry| (*entry.key(), *entry.value()))
                                     .collect();
 
-                                let ts_init =
-                                    nautilus_core::time::get_atomic_clock_realtime().get_time_ns();
+                                let ts_init = clock.get_time_ns();
                                 let ts_event = ts_init;
 
                                 match crate::http::parse::parse_account_state(
@@ -1293,7 +1409,7 @@ impl ExecutionClient for DydxExecutionClient {
                                     ts_init,
                                 ) {
                                     Ok(account_state) => {
-                                        tracing::info!(
+                                        log::info!(
                                             "Parsed account state: {} balance(s), {} margin(s)",
                                             account_state.balances.len(),
                                             account_state.margins.len()
@@ -1301,7 +1417,7 @@ impl ExecutionClient for DydxExecutionClient {
                                         dispatch_account_state(account_state);
                                     }
                                     Err(e) => {
-                                        tracing::error!("Failed to parse account state: {e}");
+                                        log::error!("Failed to parse account state: {e}");
                                     }
                                 }
 
@@ -1309,7 +1425,7 @@ impl ExecutionClient for DydxExecutionClient {
                                 if let Some(ref positions) =
                                     msg.contents.subaccount.open_perpetual_positions
                                 {
-                                    tracing::debug!(
+                                    log::debug!(
                                         "Parsing {} position(s) from subscription",
                                         positions.len()
                                     );
@@ -1322,29 +1438,27 @@ impl ExecutionClient for DydxExecutionClient {
                                             ts_init,
                                         ) {
                                             Ok(report) => {
-                                                tracing::debug!(
+                                                log::debug!(
                                                     "Parsed position report: {} {} {} {}",
                                                     report.instrument_id,
                                                     report.position_side,
                                                     report.quantity,
                                                     market
                                                 );
-                                                let sender = get_exec_event_sender();
                                                 let exec_report = NautilusExecutionReport::Position(
                                                     Box::new(report),
                                                 );
                                                 if let Err(e) =
-                                                    sender.send(ExecutionEvent::Report(exec_report))
+                                                    exec_sender.send(ExecutionEvent::Report(exec_report))
                                                 {
-                                                    tracing::warn!(
+                                                    log::warn!(
                                                         "Failed to send position status report: {e}"
                                                     );
                                                 }
                                             }
                                             Err(e) => {
-                                                tracing::error!(
-                                                    "Failed to parse WebSocket position for {}: {e}",
-                                                    market
+                                                log::error!(
+                                                    "Failed to parse WebSocket position for {market}: {e}"
                                                 );
                                             }
                                         }
@@ -1352,9 +1466,11 @@ impl ExecutionClient for DydxExecutionClient {
                                 }
                             }
                             NautilusWsMessage::SubaccountsChannelData(data) => {
-                                tracing::debug!("Processing subaccounts channel data");
-                                let ts_init =
-                                    nautilus_core::time::get_atomic_clock_realtime().get_time_ns();
+                                log::debug!("Processing subaccounts channel data (orders={:?}, fills={:?})",
+                                    data.contents.orders.as_ref().map(|o| o.len()),
+                                    data.contents.fills.as_ref().map(|f| f.len())
+                                );
+                                let ts_init = clock.get_time_ns();
 
                                 // Process orders
                                 if let Some(ref orders) = data.contents.orders {
@@ -1367,28 +1483,27 @@ impl ExecutionClient for DydxExecutionClient {
                                             ts_init,
                                         ) {
                                             Ok(report) => {
-                                                tracing::debug!(
+                                                log::debug!(
                                                     "Parsed order report: {} {} {} @ {}",
                                                     report.instrument_id,
                                                     report.order_side,
                                                     report.order_status,
                                                     report.quantity
                                                 );
-                                                let sender = get_exec_event_sender();
                                                 let exec_report =
-                                                    NautilusExecutionReport::OrderStatus(Box::new(
+                                                    NautilusExecutionReport::Order(Box::new(
                                                         report,
                                                     ));
                                                 if let Err(e) =
-                                                    sender.send(ExecutionEvent::Report(exec_report))
+                                                    exec_sender.send(ExecutionEvent::Report(exec_report))
                                                 {
-                                                    tracing::warn!(
+                                                    log::warn!(
                                                         "Failed to send order status report: {e}"
                                                     );
                                                 }
                                             }
                                             Err(e) => {
-                                                tracing::error!(
+                                                log::error!(
                                                     "Failed to parse WebSocket order: {e}"
                                                 );
                                             }
@@ -1406,26 +1521,25 @@ impl ExecutionClient for DydxExecutionClient {
                                             ts_init,
                                         ) {
                                             Ok(report) => {
-                                                tracing::debug!(
+                                                log::debug!(
                                                     "Parsed fill report: {} {} {} @ {}",
                                                     report.instrument_id,
                                                     report.venue_order_id,
                                                     report.last_qty,
                                                     report.last_px
                                                 );
-                                                let sender = get_exec_event_sender();
                                                 let exec_report =
                                                     NautilusExecutionReport::Fill(Box::new(report));
                                                 if let Err(e) =
-                                                    sender.send(ExecutionEvent::Report(exec_report))
+                                                    exec_sender.send(ExecutionEvent::Report(exec_report))
                                                 {
-                                                    tracing::warn!(
+                                                    log::warn!(
                                                         "Failed to send fill report: {e}"
                                                     );
                                                 }
                                             }
                                             Err(e) => {
-                                                tracing::error!(
+                                                log::error!(
                                                     "Failed to parse WebSocket fill: {e}"
                                                 );
                                             }
@@ -1434,7 +1548,7 @@ impl ExecutionClient for DydxExecutionClient {
                                 }
                             }
                             NautilusWsMessage::OraclePrices(oracle_prices_map) => {
-                                tracing::debug!(
+                                log::debug!(
                                     "Processing oracle price updates for {} markets",
                                     oracle_prices_map.len()
                                 );
@@ -1442,7 +1556,7 @@ impl ExecutionClient for DydxExecutionClient {
                                 // Update oracle_prices map with new prices
                                 for (market_symbol, oracle_data) in &oracle_prices_map {
                                     // Parse oracle price
-                                    match oracle_data.oracle_price.parse::<rust_decimal::Decimal>()
+                                    match oracle_data.oracle_price.parse::<Decimal>()
                                     {
                                         Ok(price) => {
                                             // Find instrument by symbol (oracle uses raw symbol like "BTC-USD")
@@ -1456,64 +1570,60 @@ impl ExecutionClient for DydxExecutionClient {
                                             }) {
                                                 let instrument_id = *entry.key();
                                                 oracle_prices.insert(instrument_id, price);
-                                                tracing::trace!(
-                                                    "Updated oracle price for {}: {}",
-                                                    instrument_id,
-                                                    price
+                                                log::trace!(
+                                                    "Updated oracle price for {instrument_id}: {price}"
                                                 );
                                             } else {
-                                                tracing::debug!(
-                                                    "No instrument found for market symbol '{}' (tried '{}')",
-                                                    market_symbol,
-                                                    symbol_with_perp
+                                                log::debug!(
+                                                    "No instrument found for market symbol '{market_symbol}' (tried '{symbol_with_perp}')"
                                                 );
                                             }
                                         }
                                         Err(e) => {
-                                            tracing::warn!(
-                                                "Failed to parse oracle price for {}: {}",
-                                                market_symbol,
-                                                e
+                                            log::warn!(
+                                                "Failed to parse oracle price for {market_symbol}: {e}"
                                             );
                                         }
                                     }
                                 }
                             }
                             NautilusWsMessage::BlockHeight(height) => {
-                                tracing::debug!("Block height update: {}", height);
+                                log::debug!("Block height update: {height}");
                                 block_height.store(height, std::sync::atomic::Ordering::Relaxed);
                             }
                             NautilusWsMessage::Error(err) => {
-                                tracing::error!("WebSocket error: {:?}", err);
+                                log::error!("WebSocket error: {err:?}");
                             }
                             NautilusWsMessage::Reconnected => {
-                                tracing::info!("WebSocket reconnected");
+                                log::info!("WebSocket reconnected");
                             }
                             _ => {
                                 // Data, Deltas are for market data, not execution
                             }
                         }
                     }
-                    tracing::info!("WebSocket message processing task ended");
+                    log::info!("WebSocket message processing task ended");
                 });
 
                 self.ws_stream_handle = Some(handle);
-                tracing::debug!("Spawned WebSocket message processing task");
+                log::info!("Spawned WebSocket message processing task");
+            } else {
+                log::error!("Failed to take WebSocket receiver - no messages will be processed");
             }
         }
 
         self.connected = true;
-        tracing::info!(client_id = %self.core.client_id, "Connected");
+        log::info!("Connected: client_id={}", self.core.client_id);
         Ok(())
     }
 
     async fn disconnect(&mut self) -> anyhow::Result<()> {
         if !self.connected {
-            tracing::warn!("dYdX execution client not connected");
+            log::warn!("dYdX execution client not connected");
             return Ok(());
         }
 
-        tracing::info!("Disconnecting from dYdX");
+        log::info!("Disconnecting from dYdX");
 
         // Unsubscribe from subaccount updates if authenticated
         if self.config.mnemonic.is_some() {
@@ -1521,7 +1631,7 @@ impl ExecutionClient for DydxExecutionClient {
                 .ws_client
                 .unsubscribe_subaccount(&self.wallet_address, self.subaccount_number)
                 .await
-                .map_err(|e| tracing::warn!("Failed to unsubscribe from subaccount: {e}"));
+                .map_err(|e| log::warn!("Failed to unsubscribe from subaccount: {e}"));
         }
 
         // Unsubscribe from markets
@@ -1529,14 +1639,14 @@ impl ExecutionClient for DydxExecutionClient {
             .ws_client
             .unsubscribe_markets()
             .await
-            .map_err(|e| tracing::warn!("Failed to unsubscribe from markets: {e}"));
+            .map_err(|e| log::warn!("Failed to unsubscribe from markets: {e}"));
 
         // Unsubscribe from block height
         let _ = self
             .ws_client
             .unsubscribe_block_height()
             .await
-            .map_err(|e| tracing::warn!("Failed to unsubscribe from block height: {e}"));
+            .map_err(|e| log::warn!("Failed to unsubscribe from block height: {e}"));
 
         // Disconnect WebSocket
         self.ws_client.disconnect().await?;
@@ -1544,14 +1654,14 @@ impl ExecutionClient for DydxExecutionClient {
         // Abort WebSocket message processing task
         if let Some(handle) = self.ws_stream_handle.take() {
             handle.abort();
-            tracing::debug!("Aborted WebSocket message processing task");
+            log::debug!("Aborted WebSocket message processing task");
         }
 
         // Abort any pending tasks
         self.abort_pending_tasks();
 
         self.connected = false;
-        tracing::info!(client_id = %self.core.client_id, "Disconnected");
+        log::info!("Disconnected: client_id={}", self.core.client_id);
         Ok(())
     }
 
@@ -1653,7 +1763,7 @@ impl ExecutionClient for DydxExecutionClient {
             ) {
                 Ok(r) => r,
                 Err(e) => {
-                    tracing::warn!("Failed to parse order status report: {e}");
+                    log::warn!("Failed to parse order status report: {e}");
                     continue;
                 }
             };
@@ -1700,7 +1810,7 @@ impl ExecutionClient for DydxExecutionClient {
             let instrument = match self.get_instrument_by_market(&fill.market) {
                 Some(inst) => inst,
                 None => {
-                    tracing::warn!("Unknown market in fill: {}", fill.market);
+                    log::warn!("Unknown market in fill: {}", fill.market);
                     continue;
                 }
             };
@@ -1719,7 +1829,7 @@ impl ExecutionClient for DydxExecutionClient {
             ) {
                 Ok(r) => r,
                 Err(e) => {
-                    tracing::warn!("Failed to parse fill report: {e}");
+                    log::warn!("Failed to parse fill report: {e}");
                     continue;
                 }
             };
@@ -1753,7 +1863,7 @@ impl ExecutionClient for DydxExecutionClient {
             let instrument = match self.get_instrument_by_market(market_ticker) {
                 Some(inst) => inst,
                 None => {
-                    tracing::warn!("Unknown market in position: {}", market_ticker);
+                    log::warn!("Unknown market in position: {market_ticker}");
                     continue;
                 }
             };
@@ -1772,7 +1882,7 @@ impl ExecutionClient for DydxExecutionClient {
             ) {
                 Ok(r) => r,
                 Err(e) => {
-                    tracing::warn!("Failed to parse position status report: {e}");
+                    log::warn!("Failed to parse position status report: {e}");
                     continue;
                 }
             };
@@ -1833,7 +1943,7 @@ impl ExecutionClient for DydxExecutionClient {
             ) {
                 Ok(r) => order_reports.push(r),
                 Err(e) => {
-                    tracing::warn!("Failed to parse order status report: {e}");
+                    log::warn!("Failed to parse order status report: {e}");
                     orders_filtered += 1;
                 }
             }
@@ -1849,7 +1959,7 @@ impl ExecutionClient for DydxExecutionClient {
                 None => continue,
             };
 
-            match crate::http::parse::parse_position_status_report(
+            match parse_position_status_report(
                 perp_position,
                 &instrument,
                 self.core.account_id,
@@ -1857,7 +1967,7 @@ impl ExecutionClient for DydxExecutionClient {
             ) {
                 Ok(r) => position_reports.push(r),
                 Err(e) => {
-                    tracing::warn!("Failed to parse position status report: {e}");
+                    log::warn!("Failed to parse position status report: {e}");
                 }
             }
         }
@@ -1882,14 +1992,14 @@ impl ExecutionClient for DydxExecutionClient {
             ) {
                 Ok(r) => fill_reports.push(r),
                 Err(e) => {
-                    tracing::warn!("Failed to parse fill report: {e}");
+                    log::warn!("Failed to parse fill report: {e}");
                     fills_filtered += 1;
                 }
             }
         }
 
         if lookback_mins.is_some() {
-            tracing::debug!(
+            log::debug!(
                 "lookback_mins={:?} filtering not yet implemented. Returning all: {} orders ({} filtered), {} positions, {} fills ({} filtered)",
                 lookback_mins,
                 order_reports.len(),
@@ -1899,7 +2009,7 @@ impl ExecutionClient for DydxExecutionClient {
                 fills_filtered
             );
         } else {
-            tracing::info!(
+            log::info!(
                 "Generated mass status: {} orders, {} positions, {} fills",
                 order_reports.len(),
                 position_reports.len(),
@@ -1928,9 +2038,8 @@ impl ExecutionClient for DydxExecutionClient {
 ///
 /// AccountState events are routed to the Portfolio (not ExecEngine) via msgbus.
 /// This follows the pattern used by BitMEX, OKX, and other reference adapters.
-fn dispatch_account_state(state: AccountState) {
-    use std::any::Any;
-    msgbus::send_any("Portfolio.update_account".into(), &state as &dyn Any);
+fn dispatch_account_state(_state: AccountState) {
+    todo!();
 }
 
 /// Dispatches execution reports to the execution engine.
@@ -1943,34 +2052,36 @@ fn dispatch_account_state(state: AccountState) {
 ///
 /// Per `docs/developer_guide/adapters.md`, adapters should:
 /// 1. Parse WebSocket messages into ExecutionReports in the handler
-/// 2. Dispatch reports via `get_exec_event_sender()`
+/// 2. Dispatch reports via the execution event sender
 /// 3. Let the execution engine handle event generation (has cache access)
 ///
 /// This pattern is used by Hyperliquid, OKX, BitMEX, and other reference adapters.
-fn dispatch_execution_report(report: ExecutionReport) {
-    let sender = get_exec_event_sender();
+fn dispatch_execution_report(
+    report: ExecutionReport,
+    sender: &tokio::sync::mpsc::UnboundedSender<ExecutionEvent>,
+) {
     match report {
         ExecutionReport::Order(order_report) => {
-            tracing::debug!(
+            log::debug!(
                 "Dispatching order report: status={:?}, venue_order_id={:?}, client_order_id={:?}",
                 order_report.order_status,
                 order_report.venue_order_id,
                 order_report.client_order_id
             );
-            let exec_report = NautilusExecutionReport::OrderStatus(order_report);
+            let exec_report = NautilusExecutionReport::Order(order_report);
             if let Err(e) = sender.send(ExecutionEvent::Report(exec_report)) {
-                tracing::warn!("Failed to send order status report: {e}");
+                log::warn!("Failed to send order status report: {e}");
             }
         }
         ExecutionReport::Fill(fill_report) => {
-            tracing::debug!(
+            log::debug!(
                 "Dispatching fill report: venue_order_id={}, trade_id={}",
                 fill_report.venue_order_id,
                 fill_report.trade_id
             );
             let exec_report = NautilusExecutionReport::Fill(fill_report);
             if let Err(e) = sender.send(ExecutionEvent::Report(exec_report)) {
-                tracing::warn!("Failed to send fill report: {e}");
+                log::warn!("Failed to send fill report: {e}");
             }
         }
     }

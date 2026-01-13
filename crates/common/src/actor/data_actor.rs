@@ -2247,7 +2247,7 @@ impl DataActorCore {
             );
         }
 
-        log::debug!("Registered '{}' with trader {trader_id}", self.actor_id);
+        log::debug!("Registered {} with trader {trader_id}", self.actor_id);
         Ok(())
     }
 
@@ -2335,15 +2335,14 @@ impl DataActorCore {
         client_id: Option<ClientId>,
         params: Option<IndexMap<String, String>>,
     ) {
-        if !self.is_properly_registered() {
-            panic!(
-                "DataActor {} is not properly registered - trader_id: {:?}, clock: {}, cache: {}",
-                self.actor_id,
-                self.trader_id,
-                self.clock.is_some(),
-                self.cache.is_some()
-            );
-        }
+        assert!(
+            self.is_properly_registered(),
+            "DataActor {} is not properly registered - trader_id: {:?}, clock: {}, cache: {}",
+            self.actor_id,
+            self.trader_id,
+            self.clock.is_some(),
+            self.cache.is_some()
+        );
 
         let topic = get_custom_topic(&data_type);
         self.add_subscription(topic, handler);
@@ -2359,6 +2358,7 @@ impl DataActorCore {
             venue: None,
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2384,6 +2384,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2408,6 +2409,7 @@ impl DataActorCore {
             venue,
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2433,6 +2435,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2465,6 +2468,7 @@ impl DataActorCore {
             ts_init: self.timestamp_ns(),
             depth,
             managed,
+            correlation_id: None,
             params,
         });
 
@@ -2497,6 +2501,7 @@ impl DataActorCore {
             ts_init: self.timestamp_ns(),
             depth,
             interval_ms,
+            correlation_id: None,
             params,
         });
 
@@ -2522,6 +2527,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2547,6 +2553,7 @@ impl DataActorCore {
             venue: Some(bar_type.instrument_id().venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2572,6 +2579,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2597,6 +2605,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2622,6 +2631,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2647,6 +2657,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2672,6 +2683,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2716,6 +2728,7 @@ impl DataActorCore {
             venue: None,
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2739,6 +2752,7 @@ impl DataActorCore {
             venue,
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2763,6 +2777,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2787,6 +2802,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2812,6 +2828,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2836,6 +2853,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2860,6 +2878,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2884,6 +2903,7 @@ impl DataActorCore {
             venue: Some(bar_type.instrument_id().venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2908,6 +2928,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2932,6 +2953,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2956,6 +2978,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -2980,6 +3003,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
@@ -3004,6 +3028,7 @@ impl DataActorCore {
             venue: Some(instrument_id.venue),
             command_id: UUID4::new(),
             ts_init: self.timestamp_ns(),
+            correlation_id: None,
             params,
         });
 
