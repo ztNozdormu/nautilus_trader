@@ -28,7 +28,7 @@ use std::{
 };
 
 use ahash::AHashMap;
-use nautilus_common::timer::TimeEventHandlerV2;
+use nautilus_common::timer::TimeEventHandler;
 use nautilus_core::{UUID4, UnixNanos};
 use nautilus_data::client::DataClientAdapter;
 use nautilus_execution::models::{fee::FeeModelAny, fill::FillModel, latency::LatencyModel};
@@ -144,6 +144,7 @@ impl BacktestEngine {
         use_random_ids: Option<bool>,
         use_reduce_only: Option<bool>,
         use_message_queue: Option<bool>,
+        use_market_order_acks: Option<bool>,
         bar_execution: Option<bool>,
         bar_adaptive_high_low_ordering: Option<bool>,
         trade_execution: Option<bool>,
@@ -184,6 +185,7 @@ impl BacktestEngine {
             use_random_ids,
             use_reduce_only,
             use_message_queue,
+            use_market_order_acks,
             allow_cash_borrowing,
             frozen_account,
             price_protection_points,
@@ -390,14 +392,14 @@ impl BacktestEngine {
         self.data.pop_front();
     }
 
-    pub fn advance_time(&mut self, _ts_now: UnixNanos) -> Vec<TimeEventHandlerV2> {
+    pub fn advance_time(&mut self, _ts_now: UnixNanos) -> Vec<TimeEventHandler> {
         // TODO: integrate TestClock advancement when kernel clocks are exposed.
         self.accumulator.drain()
     }
 
     pub fn process_raw_time_event_handlers(
         &mut self,
-        handlers: Vec<TimeEventHandlerV2>,
+        handlers: Vec<TimeEventHandler>,
         ts_now: UnixNanos,
         only_now: bool,
         as_of_now: bool,
@@ -541,6 +543,7 @@ mod tests {
                 vec![],
                 FillModel::default(),
                 FeeModelAny::default(),
+                None,
                 None,
                 None,
                 None,

@@ -153,6 +153,10 @@ impl TryFrom<OrderSide> for BinanceSide {
 /// Position side for dual-side position mode.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "nautilus_trader.core.nautilus_pyo3.binance", eq)
+)]
 pub enum BinancePositionSide {
     /// Single position mode (both).
     Both,
@@ -415,6 +419,24 @@ pub enum BinanceWsEventType {
     /// 24-hour rolling mini ticker event.
     #[serde(rename = "24hrMiniTicker")]
     MiniTicker24Hr,
+
+    // User data stream events
+    /// Account update (balance and position changes).
+    #[serde(rename = "ACCOUNT_UPDATE")]
+    AccountUpdate,
+    /// Order/trade update event.
+    #[serde(rename = "ORDER_TRADE_UPDATE")]
+    OrderTradeUpdate,
+    /// Margin call warning event.
+    #[serde(rename = "MARGIN_CALL")]
+    MarginCall,
+    /// Account configuration update (leverage change).
+    #[serde(rename = "ACCOUNT_CONFIG_UPDATE")]
+    AccountConfigUpdate,
+    /// Listen key expired event.
+    #[serde(rename = "listenKeyExpired")]
+    ListenKeyExpired,
+
     /// Unknown or undocumented event type.
     #[serde(other)]
     Unknown,
@@ -434,6 +456,11 @@ impl BinanceWsEventType {
             Self::ForceOrder => "forceOrder",
             Self::Ticker24Hr => "24hrTicker",
             Self::MiniTicker24Hr => "24hrMiniTicker",
+            Self::AccountUpdate => "ACCOUNT_UPDATE",
+            Self::OrderTradeUpdate => "ORDER_TRADE_UPDATE",
+            Self::MarginCall => "MARGIN_CALL",
+            Self::AccountConfigUpdate => "ACCOUNT_CONFIG_UPDATE",
+            Self::ListenKeyExpired => "listenKeyExpired",
             Self::Unknown => "unknown",
         }
     }
@@ -561,6 +588,31 @@ pub enum BinanceKlineInterval {
     /// 1 month.
     #[serde(rename = "1M")]
     Month1,
+}
+
+impl BinanceKlineInterval {
+    /// Returns the string representation used by Binance API.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Second1 => "1s",
+            Self::Minute1 => "1m",
+            Self::Minute3 => "3m",
+            Self::Minute5 => "5m",
+            Self::Minute15 => "15m",
+            Self::Minute30 => "30m",
+            Self::Hour1 => "1h",
+            Self::Hour2 => "2h",
+            Self::Hour4 => "4h",
+            Self::Hour6 => "6h",
+            Self::Hour8 => "8h",
+            Self::Hour12 => "12h",
+            Self::Day1 => "1d",
+            Self::Day3 => "3d",
+            Self::Week1 => "1w",
+            Self::Month1 => "1M",
+        }
+    }
 }
 
 #[cfg(test)]

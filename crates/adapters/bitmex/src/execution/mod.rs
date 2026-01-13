@@ -24,6 +24,7 @@ use anyhow::Context;
 use async_trait::async_trait;
 use futures_util::{StreamExt, pin_mut};
 use nautilus_common::{
+    clients::ExecutionClient,
     live::{runner::get_exec_event_sender, runtime::get_runtime},
     messages::{
         ExecutionEvent, ExecutionReport,
@@ -36,7 +37,7 @@ use nautilus_common::{
     msgbus,
 };
 use nautilus_core::{UUID4, UnixNanos, time::get_atomic_clock_realtime};
-use nautilus_execution::client::{ExecutionClient, base::ExecutionClientCore};
+use nautilus_live::ExecutionClientCore;
 use nautilus_model::{
     accounts::AccountAny,
     enums::OmsType,
@@ -498,7 +499,7 @@ impl ExecutionClient for BitmexExecutionClient {
     }
 
     fn submit_order(&self, cmd: &SubmitOrder) -> anyhow::Result<()> {
-        let order = cmd.order.clone();
+        let order = self.core.get_order(&cmd.client_order_id)?;
 
         if order.is_closed() {
             log::warn!("Cannot submit closed order {}", order.client_order_id());
@@ -761,7 +762,7 @@ fn dispatch_account_state(state: AccountState) {
 
 fn dispatch_order_status_report(report: OrderStatusReport) {
     let sender = get_exec_event_sender();
-    let exec_report = ExecutionReport::OrderStatus(Box::new(report));
+    let exec_report = ExecutionReport::Order(Box::new(report));
     if let Err(e) = sender.send(ExecutionEvent::Report(exec_report)) {
         log::warn!("Failed to send order status report: {e}");
     }

@@ -46,14 +46,12 @@ use tokio_util::sync::CancellationToken;
 use ustr::Ustr;
 
 use super::{
+    super::error::{BinanceWsError, BinanceWsResult},
     handler::BinanceSpotWsFeedHandler,
     messages::{HandlerCommand, NautilusWsMessage},
     subscription::MAX_STREAMS_PER_CONNECTION,
 };
-use crate::{
-    common::{consts::BINANCE_SPOT_SBE_WS_URL, credential::Ed25519Credential},
-    websocket::error::{BinanceWsError, BinanceWsResult},
-};
+use crate::common::{consts::BINANCE_SPOT_SBE_WS_URL, credential::Ed25519Credential};
 
 /// Binance Spot WebSocket client for SBE market data streams.
 #[derive(Clone)]
@@ -177,6 +175,12 @@ impl BinanceSpotWebSocketClient {
             vec![]
         };
 
+        log::info!(
+            "Connecting to Binance SBE WebSocket: url={}, auth={}",
+            self.url,
+            self.credential.is_some()
+        );
+
         let config = WebSocketConfig {
             url: self.url.clone(),
             headers,
@@ -199,7 +203,10 @@ impl BinanceSpotWebSocketClient {
             None,
         )
         .await
-        .map_err(|e| BinanceWsError::NetworkError(e.to_string()))?;
+        .map_err(|e| {
+            log::error!("WebSocket connection failed: {e}");
+            BinanceWsError::NetworkError(e.to_string())
+        })?;
 
         self.connection_mode.store(client.connection_mode_atomic());
 
@@ -247,7 +254,7 @@ impl BinanceSpotWebSocketClient {
         let task_handle = get_runtime().spawn(async move {
             loop {
                 tokio::select! {
-                    _ = cancellation_token.cancelled() => {
+                    () = cancellation_token.cancelled() => {
                         log::debug!("Handler task cancelled");
                         break;
                     }

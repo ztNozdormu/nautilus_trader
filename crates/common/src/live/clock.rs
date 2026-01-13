@@ -16,14 +16,13 @@
 //! Live clock implementation using Tokio for real-time operations.
 
 use std::{
-    collections::BinaryHeap,
+    collections::{BTreeMap, BinaryHeap},
     ops::Deref,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
 
-use ahash::AHashMap;
 use futures::Stream;
 use nautilus_core::{
     AtomicTime, UnixNanos, consts::NAUTILUS_PREFIX, correctness::check_predicate_true,
@@ -36,7 +35,7 @@ use crate::{
     clock::{CallbackRegistry, Clock, validate_and_prepare_time_alert, validate_and_prepare_timer},
     runner::{TimeEventSender, try_get_time_event_sender},
     timer::{
-        ScheduledTimeEvent, TimeEvent, TimeEventCallback, TimeEventHandlerV2, create_valid_interval,
+        ScheduledTimeEvent, TimeEvent, TimeEventCallback, TimeEventHandler, create_valid_interval,
     },
 };
 
@@ -50,7 +49,7 @@ use crate::{
 #[derive(Debug)]
 pub struct LiveClock {
     time: &'static AtomicTime,
-    timers: AHashMap<Ustr, LiveTimer>,
+    timers: BTreeMap<Ustr, LiveTimer>,
     callbacks: CallbackRegistry,
     sender: Option<Arc<dyn TimeEventSender>>,
 }
@@ -61,14 +60,14 @@ impl LiveClock {
     pub fn new(sender: Option<Arc<dyn TimeEventSender>>) -> Self {
         Self {
             time: get_atomic_clock_realtime(),
-            timers: AHashMap::new(),
+            timers: BTreeMap::new(),
             callbacks: CallbackRegistry::new(),
             sender,
         }
     }
 
     #[must_use]
-    pub const fn get_timers(&self) -> &AHashMap<Ustr, LiveTimer> {
+    pub const fn get_timers(&self) -> &BTreeMap<Ustr, LiveTimer> {
         &self.timers
     }
 
@@ -146,7 +145,7 @@ impl Clock for LiveClock {
     /// This function panics if:
     /// - The event does not have an associated handler (see trait documentation).
     #[allow(unused_variables)]
-    fn get_handler(&self, event: TimeEvent) -> TimeEventHandlerV2 {
+    fn get_handler(&self, event: TimeEvent) -> TimeEventHandler {
         self.callbacks.get_handler(event)
     }
 
@@ -332,7 +331,7 @@ mod tests {
         clock::Clock,
         runner::TimeEventSender,
         testing::wait_until,
-        timer::{TimeEvent, TimeEventCallback, TimeEventHandlerV2},
+        timer::{TimeEvent, TimeEventCallback, TimeEventHandler},
     };
 
     #[derive(Debug)]
@@ -347,8 +346,8 @@ mod tests {
     }
 
     impl TimeEventSender for CollectingSender {
-        fn send(&self, handler: TimeEventHandlerV2) {
-            let TimeEventHandlerV2 { event, callback } = handler;
+        fn send(&self, handler: TimeEventHandler) {
+            let TimeEventHandler { event, callback } = handler;
             let now_ns = get_atomic_clock_realtime().get_time_ns();
             let event_clone = event.clone();
             callback.call(event);

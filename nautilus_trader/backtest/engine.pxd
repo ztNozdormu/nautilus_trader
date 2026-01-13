@@ -30,7 +30,7 @@ from nautilus_trader.common.component cimport Clock
 from nautilus_trader.common.component cimport Logger
 from nautilus_trader.common.component cimport MessageBus
 from nautilus_trader.core.data cimport Data
-from nautilus_trader.core.rust.backtest cimport TimeEventAccumulatorAPI
+from nautilus_trader.core.rust.backtest cimport TimeEventAccumulator_API
 from nautilus_trader.core.rust.core cimport CVec
 from nautilus_trader.core.rust.model cimport AccountType
 from nautilus_trader.core.rust.model cimport AggressorSide
@@ -95,7 +95,7 @@ cdef class BacktestEngine:
     cdef object _config
     cdef Clock _clock
     cdef Logger _log
-    cdef TimeEventAccumulatorAPI _accumulator
+    cdef TimeEventAccumulator_API _accumulator
 
     cdef object _kernel
     cdef UUID4 _instance_id
@@ -124,6 +124,7 @@ cdef class BacktestEngine:
     cdef list _response_data
 
     cdef CVec _advance_time(self, uint64_t ts_now)
+    cdef void _flush_accumulator_events(self, uint64_t ts_now)
     cdef void _process_raw_time_event_handlers(
         self,
         CVec raw_handlers,
@@ -247,6 +248,8 @@ cdef class SimulatedExchange:
     """If the `reduce_only` option on orders will be honored.\n\n:returns: `bool`"""
     cdef readonly bint use_message_queue
     """If an internal message queue is being used to sequentially process incoming trading commands.\n\n:returns: `bool`"""
+    cdef readonly bint use_market_order_acks
+    """If OrderAccepted events will be generated for market orders.\n\n:returns: `bool`"""
     cdef readonly bint bar_execution
     """If bars should be processed by the matching engine(s) (and move the market).\n\n:returns: `bool`"""
     cdef readonly bint bar_adaptive_high_low_ordering
@@ -345,6 +348,7 @@ cdef class OrderMatchingEngine:
     cdef bint _use_position_ids
     cdef bint _use_random_ids
     cdef bint _use_reduce_only
+    cdef bint _use_market_order_acks
     cdef bint _bar_execution
     cdef bint _bar_adaptive_high_low_ordering
     cdef bint _trade_execution
