@@ -406,7 +406,7 @@ It's possible to install from source using pip if you first install the build de
     ```bash
     git clone --branch develop --depth 1 https://github.com/nautechsystems/nautilus_trader
     cd nautilus_trader
-    
+    uv sync --all-extras
    
     ```
 

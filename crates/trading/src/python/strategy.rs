@@ -168,7 +168,7 @@ impl StrategyConfig {
 /// Inner state of PyStrategy, shared between Python wrapper and Rust registries.
 pub struct PyStrategyInner {
     core: StrategyCore,
-    py_self: Option<Py<PyAny>>,
+    pub py_self: Option<Py<PyAny>>,
     clock: PyClock,
     logger: PyLogger,
 }
@@ -728,7 +728,7 @@ impl DataActor for PyStrategyInner {
     subclass
 )]
 pub struct PyStrategy {
-    inner: Rc<UnsafeCell<PyStrategyInner>>,
+   pub inner: Rc<UnsafeCell<PyStrategyInner>>,
 }
 
 impl Debug for PyStrategy {
@@ -742,13 +742,13 @@ impl Debug for PyStrategy {
 impl PyStrategy {
     #[inline]
     #[allow(unsafe_code)]
-    pub(crate) fn inner(&self) -> &PyStrategyInner {
+    pub fn inner(&self) -> &PyStrategyInner {
         unsafe { &*self.inner.get() }
     }
 
     #[inline]
     #[allow(unsafe_code, clippy::mut_from_ref)]
-    pub(crate) fn inner_mut(&self) -> &mut PyStrategyInner {
+    pub fn inner_mut(&self) -> &mut PyStrategyInner {
         unsafe { &mut *self.inner.get() }
     }
 
