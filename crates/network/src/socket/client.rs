@@ -815,6 +815,7 @@ impl SocketClient {
         post_reconnection: Option<Arc<dyn Fn() + Send + Sync>>,
         post_disconnection: Option<Arc<dyn Fn() + Send + Sync>>,
     ) -> anyhow::Result<Self> {
+        log::debug!("Called `post_connection` handler888");
         let inner = SocketClientInner::connect_url(config).await?;
         let writer_tx = inner.writer_tx.clone();
         let connection_mode = inner.connection_mode.clone();

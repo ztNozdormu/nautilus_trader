@@ -250,12 +250,133 @@ impl WebSocketClientInner {
     /// - The URL cannot be parsed into a valid client request.
     /// - Header values are invalid.
     /// - The WebSocket connection fails.
+    // #[inline]
+    // #[cfg(not(feature = "turmoil"))]
+    // pub async fn connect_with_server(
+    //     url: &str,
+    //     headers: Vec<(String, String)>,
+    // ) -> Result<(MessageWriter, MessageReader), Error> {
+    //     let mut request = url.into_client_request()?;
+    //     let req_headers = request.headers_mut();
+    //
+    //     let mut header_names: Vec<HeaderName> = Vec::new();
+    //     for (key, val) in headers {
+    //         let header_value = HeaderValue::from_str(&val)?;
+    //         let header_name: HeaderName = key.parse()?;
+    //         header_names.push(header_name.clone());
+    //         req_headers.insert(header_name, header_value);
+    //     }
+    //
+    //     connect_async_with_config(request, None, true)
+    //         .await
+    //         .map(|resp| resp.0.split())
+    // }
+    //
+    // /// Connects with the server creating a tokio-tungstenite websocket stream.
+    // /// Turmoil version that uses the lower-level `client_async` API with injected stream.
+    // ///
+    // /// # Errors
+    // ///
+    // /// Returns an error if:
+    // /// - The URL cannot be parsed into a valid client request.
+    // /// - The URL is missing a hostname.
+    // /// - Header values are invalid.
+    // /// - The TCP connection fails.
+    // /// - TLS setup fails (for wss:// URLs).
+    // /// - The WebSocket handshake fails.
+    // #[inline]
+    // #[cfg(feature = "turmoil")]
+    // pub async fn connect_with_server(
+    //     url: &str,
+    //     headers: Vec<(String, String)>,
+    // ) -> Result<(MessageWriter, MessageReader), Error> {
+    //     use rustls::ClientConfig;
+    //     use tokio_rustls::TlsConnector;
+    //
+    //     let mut request = url.into_client_request()?;
+    //     let req_headers = request.headers_mut();
+    //
+    //     let mut header_names: Vec<HeaderName> = Vec::new();
+    //     for (key, val) in headers {
+    //         let header_value = HeaderValue::from_str(&val)?;
+    //         let header_name: HeaderName = key.parse()?;
+    //         header_names.push(header_name.clone());
+    //         req_headers.insert(header_name, header_value);
+    //     }
+    //
+    //     let uri = request.uri();
+    //     let scheme = uri.scheme_str().unwrap_or("ws");
+    //     let host = uri.host().ok_or_else(|| {
+    //         Error::Url(tokio_tungstenite::tungstenite::error::UrlError::NoHostName)
+    //     })?;
+    //
+    //     // Determine port: use explicit port if specified, otherwise default based on scheme
+    //     let port = uri
+    //         .port_u16()
+    //         .unwrap_or_else(|| if scheme == "wss" { 443 } else { 80 });
+    //
+    //     let addr = format!("{host}:{port}");
+    //
+    //     // Use the connector to get a turmoil-compatible stream
+    //     let connector = crate::net::RealTcpConnector;
+    //     let tcp_stream = connector.connect(&addr).await?;
+    //     if let Err(e) = tcp_stream.set_nodelay(true) {
+    //         log::warn!("Failed to enable TCP_NODELAY for socket client: {e:?}");
+    //     }
+    //
+    //     // Wrap stream appropriately based on scheme
+    //     let maybe_tls_stream = if scheme == "wss" {
+    //         // Build TLS config with webpki roots
+    //         let mut root_store = rustls::RootCertStore::empty();
+    //         root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    //
+    //         let config = ClientConfig::builder()
+    //             .with_root_certificates(root_store)
+    //             .with_no_client_auth();
+    //
+    //         let tls_connector = TlsConnector::from(std::sync::Arc::new(config));
+    //         let domain =
+    //             rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|e| {
+    //                 Error::Io(std::io::Error::new(
+    //                     std::io::ErrorKind::InvalidInput,
+    //                     format!("Invalid DNS name: {e}"),
+    //                 ))
+    //             })?;
+    //
+    //         let tls_stream = tls_connector.connect(domain, tcp_stream).await?;
+    //         MaybeTlsStream::Rustls(tls_stream)
+    //     } else {
+    //         MaybeTlsStream::Plain(tcp_stream)
+    //     };
+    //
+    //     // Use client_async with the stream (plain or TLS)
+    //     client_async(request, maybe_tls_stream)
+    //         .await
+    //         .map(|resp| resp.0.split())
+    // }
+
+    /// Connects with the server creating a tokio-tungstenite websocket stream.
+    /// Production version with proxy support.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The URL cannot be parsed into a valid client request.
+    /// - Header values are invalid.
+    /// - The WebSocket connection fails.
+    /// - Proxy connection fails.
     #[inline]
     #[cfg(not(feature = "turmoil"))]
     pub async fn connect_with_server(
         url: &str,
         headers: Vec<(String, String)>,
     ) -> Result<(MessageWriter, MessageReader), Error> {
+        use rustls::ClientConfig;
+        use std::env;
+        use tokio_rustls::TlsConnector;
+        use tokio_tungstenite::MaybeTlsStream;
+        use tokio_tungstenite::client_async;
+
         let mut request = url.into_client_request()?;
         let req_headers = request.headers_mut();
 
@@ -267,23 +388,169 @@ impl WebSocketClientInner {
             req_headers.insert(header_name, header_value);
         }
 
-        connect_async_with_config(request, None, true)
+        let uri = request.uri();
+        let scheme = uri.scheme_str().unwrap_or("ws");
+        let host = uri.host().ok_or_else(|| {
+            Error::Url(tokio_tungstenite::tungstenite::error::UrlError::NoHostName)
+        })?;
+
+        let port = uri
+            .port_u16()
+            .unwrap_or_else(|| if scheme == "wss" { 443 } else { 80 });
+
+        // 检查是否启用代理（默认启用）
+        let use_proxy = env::var("WEBSOCKET_PROXY_ENABLED")
+            .map(|v| v != "0" && v != "false")
+            .unwrap_or(true); // 默认启用代理
+
+        let addr = format!("{host}:{port}");
+
+        // 使用代理或直接连接
+        let stream = if use_proxy {
+            // 获取代理服务器地址，默认为 localhost:8888
+            let proxy_addr =
+                env::var("WEBSOCKET_PROXY_ADDR").unwrap_or_else(|_| "localhost:8888".to_string());
+
+            log::info!("Connecting to WebSocket via proxy: {}", proxy_addr);
+
+            // 连接到代理服务器
+            let proxy_stream = tokio::net::TcpStream::connect(&proxy_addr)
+                .await
+                .map_err(|e| {
+                    Error::Io(std::io::Error::new(
+                        e.kind(),
+                        format!("Failed to connect to proxy {}: {}", proxy_addr, e),
+                    ))
+                })?;
+
+            // 通过代理建立到目标服务器的隧道
+            Self::connect_via_proxy(proxy_stream, host, port).await?
+        } else {
+            // 直接连接
+            let stream = tokio::net::TcpStream::connect(&addr).await.map_err(|e| {
+                Error::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("Failed to connect to {}: {}", addr, e),
+                ))
+            })?;
+
+            if let Err(e) = stream.set_nodelay(true) {
+                log::warn!("Failed to enable TCP_NODELAY for socket client: {e:?}");
+            }
+            stream
+        };
+
+        // Wrap stream appropriately based on scheme
+        let maybe_tls_stream = if scheme == "wss" {
+            // Build TLS config with webpki roots
+            let mut root_store = rustls::RootCertStore::empty();
+            root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+            let config = ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth();
+
+            let tls_connector = TlsConnector::from(std::sync::Arc::new(config));
+            let domain =
+                rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|e| {
+                    Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("Invalid DNS name: {e}"),
+                    ))
+                })?;
+
+            let tls_stream = tls_connector.connect(domain, stream).await?;
+            MaybeTlsStream::Rustls(tls_stream)
+        } else {
+            MaybeTlsStream::Plain(stream)
+        };
+
+        // Use client_async with the stream (plain or TLS)
+        client_async(request, maybe_tls_stream)
             .await
             .map(|resp| resp.0.split())
     }
 
-    /// Connects with the server creating a tokio-tungstenite websocket stream.
-    /// Turmoil version that uses the lower-level `client_async` API with injected stream.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The URL cannot be parsed into a valid client request.
-    /// - The URL is missing a hostname.
-    /// - Header values are invalid.
-    /// - The TCP connection fails.
-    /// - TLS setup fails (for wss:// URLs).
-    /// - The WebSocket handshake fails.
+    /// 通过HTTP代理建立到目标WebSocket服务器的连接
+    #[cfg(not(feature = "turmoil"))]
+    async fn connect_via_proxy(
+        mut proxy_stream: tokio::net::TcpStream,
+        target_host: &str,
+        target_port: u16,
+    ) -> Result<tokio::net::TcpStream, Error> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // 构造CONNECT请求建立隧道
+        let connect_request = format!(
+            "CONNECT {}:{} HTTP/1.1\r\nHost: {}:{}\r\n\r\n",
+            target_host, target_port, target_host, target_port
+        );
+
+        // 发送CONNECT请求到代理服务器
+        proxy_stream
+            .write_all(connect_request.as_bytes())
+            .await
+            .map_err(|e| {
+                Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    format!("Failed to send CONNECT request to proxy: {e}"),
+                ))
+            })?;
+
+        // 读取代理服务器的响应
+        let mut response = Vec::new();
+        let mut buffer = [0u8; 1024];
+
+        loop {
+            let n = proxy_stream.read(&mut buffer).await.map_err(|e| {
+                Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    format!("Failed to read proxy response: {e}"),
+                ))
+            })?;
+
+            if n == 0 {
+                return Err(Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    "Proxy connection closed unexpectedly",
+                )));
+            }
+
+            response.extend_from_slice(&buffer[..n]);
+
+            // 检查是否收到了完整的HTTP响应（以\r\n\r\n结尾）
+            if response.ends_with(b"\r\n\r\n") {
+                break;
+            }
+
+            // 防止无限循环，限制响应大小
+            if response.len() > 8192 {
+                return Err(Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Proxy response too large",
+                )));
+            }
+        }
+
+        // 解析HTTP响应
+        let response_str = String::from_utf8_lossy(&response);
+        if !response_str.starts_with("HTTP/1.1 200") && !response_str.starts_with("HTTP/1.0 200") {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                format!("Proxy refused connection: {}", response_str),
+            )));
+        }
+
+        log::debug!(
+            "Successfully connected via proxy to {}:{}",
+            target_host,
+            target_port
+        );
+
+        Ok(proxy_stream)
+    }
+
+    /// Turmoil测试环境版本 - 保持原有逻辑，不支持代理
     #[inline]
     #[cfg(feature = "turmoil")]
     pub async fn connect_with_server(
@@ -310,12 +577,14 @@ impl WebSocketClientInner {
             Error::Url(tokio_tungstenite::tungstenite::error::UrlError::NoHostName)
         })?;
 
-        // Determine port: use explicit port if specified, otherwise default based on scheme
         let port = uri
             .port_u16()
             .unwrap_or_else(|| if scheme == "wss" { 443 } else { 80 });
 
         let addr = format!("{host}:{port}");
+
+        // 在turmoil环境中总是使用直接连接
+        log::info!("Using direct connection in turmoil test environment (proxy not supported)");
 
         // Use the connector to get a turmoil-compatible stream
         let connector = crate::net::RealTcpConnector;

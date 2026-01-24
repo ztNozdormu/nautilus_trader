@@ -62,6 +62,7 @@ tokio-util = { workspace = true }
 url = { workspace = true }
 ustr = { workspace = true }
 webpki-roots = { workspace = true }
+tokio-socks = "0.5.2"
 
 pyo3 = { workspace = true, optional = true }
 pyo3-async-runtimes = { workspace = true, optional = true }
