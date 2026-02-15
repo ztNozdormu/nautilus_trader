@@ -81,6 +81,13 @@ impl LiveNodeBuilder {
         })
     }
 
+    /// Set the complete node configuration (overwrites individual fields).
+    #[must_use]
+    pub fn with_config(mut self, config: LiveNodeConfig) -> Self {
+        self.config = config;
+        self
+    }
+
     /// Returns the name for the node.
     #[must_use]
     pub fn name(&self) -> &str {
