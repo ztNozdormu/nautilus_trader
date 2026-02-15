@@ -207,6 +207,15 @@ impl LiveNode {
         LiveNodeBuilder::new(trader_id, environment)
     }
 
+    /// Creates a new [`LiveNodeBuilder`] for fluent configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the environment is invalid for live trading.
+    pub fn builder_with_config(config: Option<LiveNodeConfig>) -> anyhow::Result<LiveNodeBuilder> {
+        LiveNodeBuilder::new_with_config(config)
+    }
+
     /// Creates a new [`LiveNode`] directly from a kernel name and optional configuration.
     ///
     /// This is a convenience method for creating a live node with a pre-configured

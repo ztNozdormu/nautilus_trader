@@ -43,8 +43,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     let okx_config = OKXDataClientConfig {
-        api_key: Some("87b2322a-b0dd-4a4b-84de-e3b23cf53fe4".to_string()),        // Will use 'OKX_API_KEY' env var
-        api_secret: Some("DE6D29E2CA70E8C854D45D1E883BEBE9".to_string()),     // Will use 'OKX_API_SECRET' env var
+        api_key: Some("87b2322a-b0dd-4a4b-84de-e3b23cf53fe4".to_string()), // Will use 'OKX_API_KEY' env var
+        api_secret: Some("DE6D29E2CA70E8C854D45D1E883BEBE9".to_string()), // Will use 'OKX_API_SECRET' env var
         api_passphrase: Some("@Zt2307631397".to_string()), // Will use 'OKX_PASSPHRASE' env var
         instrument_types: vec![OKXInstrumentType::Swap],
         is_demo: false,

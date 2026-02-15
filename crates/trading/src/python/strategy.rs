@@ -728,7 +728,7 @@ impl DataActor for PyStrategyInner {
     subclass
 )]
 pub struct PyStrategy {
-   pub inner: Rc<UnsafeCell<PyStrategyInner>>,
+    pub inner: Rc<UnsafeCell<PyStrategyInner>>,
 }
 
 impl Debug for PyStrategy {
