@@ -81,6 +81,30 @@ impl LiveNodeBuilder {
         })
     }
 
+    /// Creates a new [`LiveNodeBuilder`] with LiveNodeConfig parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `environment` is invalid (BACKTEST).
+    pub fn new_with_config(config: Option<LiveNodeConfig>) -> anyhow::Result<Self> {
+        let mut config = config.unwrap_or_default();
+        match config.environment {
+            Environment::Sandbox | Environment::Live => {}
+            Environment::Backtest => {
+                anyhow::bail!("LiveNode cannot be used with Backtest environment");
+            }
+        }
+
+        Ok(Self {
+            name: "LiveNode".to_string(),
+            config,
+            data_client_factories: HashMap::new(),
+            exec_client_factories: HashMap::new(),
+            data_client_configs: HashMap::new(),
+            exec_client_configs: HashMap::new(),
+        })
+    }
+
     /// Returns the name for the node.
     #[must_use]
     pub fn name(&self) -> &str {
