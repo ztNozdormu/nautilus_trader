@@ -432,10 +432,10 @@ impl WebSocketClientInner {
             .port_u16()
             .unwrap_or_else(|| if scheme == "wss" { 443 } else { 80 });
 
-        // 检查是否启用代理（默认启用）
+        // 检查是否启用代理（默认不启用）
         let use_proxy = env::var("WEBSOCKET_PROXY_ENABLED")
-            .map(|v| v != "0" && v != "false")
-            .unwrap_or(true); // 默认启用代理
+            .map(|v| v == "true")
+            .unwrap_or(false);
 
         let addr = format!("{host}:{port}");
 
