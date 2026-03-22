@@ -300,7 +300,7 @@ impl WebSocketClientInner {
             // 👇 注意这里必须 .await
             return Self::connect_with_server_with_proxy(url, headers).await;
         }
-
+        log::info!("Connecting NO proxy");
         let mut request = url.into_client_request()?;
         let req_headers = request.headers_mut();
 
