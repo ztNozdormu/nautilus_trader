@@ -284,27 +284,38 @@ impl WebSocketClientInner {
     /// - The URL cannot be parsed into a valid client request.
     /// - Header values are invalid.
     /// - The WebSocket connection fails.
-    // #[inline]
-    // #[cfg(not(feature = "turmoil"))]
-    // pub async fn connect_with_server(
-    //     url: &str,
-    //     headers: Vec<(String, String)>,
-    // ) -> Result<(MessageWriter, MessageReader), Error> {
-    //     let mut request = url.into_client_request()?;
-    //     let req_headers = request.headers_mut();
-    //
-    //     let mut header_names: Vec<HeaderName> = Vec::new();
-    //     for (key, val) in headers {
-    //         let header_value = HeaderValue::from_str(&val)?;
-    //         let header_name: HeaderName = key.parse()?;
-    //         header_names.push(header_name.clone());
-    //         req_headers.insert(header_name, header_value);
-    //     }
-    //
-    //     connect_async_with_config(request, None, true)
-    //         .await
-    //         .map(|resp| resp.0.split())
-    // }
+    #[inline]
+    #[cfg(not(feature = "turmoil"))]
+    pub async fn connect_with_server(
+        url: &str,
+        headers: Vec<(String, String)>,
+    ) -> Result<(MessageWriter, MessageReader), Error> {
+        use std::env;
+
+        let use_proxy = env::var("WEBSOCKET_PROXY_ENABLED")
+            .map(|v| v == "true")
+            .unwrap_or(false);
+
+        if use_proxy {
+            // 👇 注意这里必须 .await
+            return Self::connect_with_server_with_proxy(url, headers).await;
+        }
+
+        let mut request = url.into_client_request()?;
+        let req_headers = request.headers_mut();
+
+        let mut header_names: Vec<HeaderName> = Vec::new();
+        for (key, val) in headers {
+            let header_value = HeaderValue::from_str(&val)?;
+            let header_name: HeaderName = key.parse()?;
+            header_names.push(header_name.clone());
+            req_headers.insert(header_name, header_value);
+        }
+
+        connect_async_with_config(request, None, true)
+            .await
+            .map(|resp| resp.0.split())
+    }
 
     /// Connects with the server creating a tokio-tungstenite websocket stream.
     /// Turmoil version that uses the lower-level `client_async` API with injected stream.
@@ -399,26 +410,129 @@ impl WebSocketClientInner {
     /// - Header values are invalid.
     /// - The WebSocket connection fails.
     /// - Proxy connection fails.
+    // #[inline]
+    // #[cfg(not(feature = "turmoil"))]
+    // pub async fn connect_with_server(
+    //     url: &str,
+    //     headers: Vec<(String, String)>,
+    // ) -> Result<(MessageWriter, MessageReader), Error> {
+    //     use rustls::ClientConfig;
+    //     use std::env;
+    //     use tokio_rustls::TlsConnector;
+    //     use tokio_tungstenite::MaybeTlsStream;
+    //     use tokio_tungstenite::client_async;
+    //
+    //     let mut request = url.into_client_request()?;
+    //     let req_headers = request.headers_mut();
+    //
+    //     let mut header_names: Vec<HeaderName> = Vec::new();
+    //     for (key, val) in headers {
+    //         let header_value = HeaderValue::from_str(&val)?;
+    //         let header_name: HeaderName = key.parse()?;
+    //         header_names.push(header_name.clone());
+    //         req_headers.insert(header_name, header_value);
+    //     }
+    //
+    //     let uri = request.uri();
+    //     let scheme = uri.scheme_str().unwrap_or("ws");
+    //     let host = uri.host().ok_or_else(|| {
+    //         Error::Url(tokio_tungstenite::tungstenite::error::UrlError::NoHostName)
+    //     })?;
+    //
+    //     let port = uri
+    //         .port_u16()
+    //         .unwrap_or_else(|| if scheme == "wss" { 443 } else { 80 });
+    //
+    //     // 检查是否启用代理（默认不启用）
+    //     let use_proxy = env::var("WEBSOCKET_PROXY_ENABLED")
+    //         .map(|v| v == "true")
+    //         .unwrap_or(false);
+    //
+    //     let addr = format!("{host}:{port}");
+    //
+    //     // 使用代理或直接连接
+    //     let stream = if use_proxy {
+    //         // 获取代理服务器地址，默认为 localhost:8888
+    //         let proxy_addr =
+    //             env::var("WEBSOCKET_PROXY_ADDR").unwrap_or_else(|_| "localhost:8888".to_string());
+    //
+    //         log::info!("Connecting to WebSocket via proxy: {}", proxy_addr);
+    //
+    //         // 连接到代理服务器
+    //         let proxy_stream = tokio::net::TcpStream::connect(&proxy_addr)
+    //             .await
+    //             .map_err(|e| {
+    //                 Error::Io(std::io::Error::new(
+    //                     e.kind(),
+    //                     format!("Failed to connect to proxy {}: {}", proxy_addr, e),
+    //                 ))
+    //             })?;
+    //
+    //         // 通过代理建立到目标服务器的隧道
+    //         Self::connect_via_proxy(proxy_stream, host, port).await?
+    //     } else {
+    //         // 直接连接
+    //         let stream = tokio::net::TcpStream::connect(&addr).await.map_err(|e| {
+    //             Error::Io(std::io::Error::new(
+    //                 e.kind(),
+    //                 format!("Failed to connect to {}: {}", addr, e),
+    //             ))
+    //         })?;
+    //
+    //         if let Err(e) = stream.set_nodelay(true) {
+    //             log::warn!("Failed to enable TCP_NODELAY for socket client: {e:?}");
+    //         }
+    //         stream
+    //     };
+    //
+    //     // Wrap stream appropriately based on scheme
+    //     let maybe_tls_stream = if scheme == "wss" {
+    //         // Build TLS config with webpki roots
+    //         let mut root_store = rustls::RootCertStore::empty();
+    //         root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    //
+    //         let config = ClientConfig::builder()
+    //             .with_root_certificates(root_store)
+    //             .with_no_client_auth();
+    //
+    //         let tls_connector = TlsConnector::from(std::sync::Arc::new(config));
+    //         let domain =
+    //             rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|e| {
+    //                 Error::Io(std::io::Error::new(
+    //                     std::io::ErrorKind::InvalidInput,
+    //                     format!("Invalid DNS name: {e}"),
+    //                 ))
+    //             })?;
+    //
+    //         let tls_stream = tls_connector.connect(domain, stream).await?;
+    //         MaybeTlsStream::Rustls(tls_stream)
+    //     } else {
+    //         MaybeTlsStream::Plain(stream)
+    //     };
+    //
+    //     // Use client_async with the stream (plain or TLS)
+    //     client_async(request, maybe_tls_stream)
+    //         .await
+    //         .map(|resp| resp.0.split())
+    // }
+
     #[inline]
     #[cfg(not(feature = "turmoil"))]
-    pub async fn connect_with_server(
+    pub async fn connect_with_server_with_proxy(
         url: &str,
         headers: Vec<(String, String)>,
     ) -> Result<(MessageWriter, MessageReader), Error> {
         use rustls::ClientConfig;
         use std::env;
         use tokio_rustls::TlsConnector;
-        use tokio_tungstenite::MaybeTlsStream;
-        use tokio_tungstenite::client_async;
+        use tokio_tungstenite::{MaybeTlsStream, client_async};
 
         let mut request = url.into_client_request()?;
         let req_headers = request.headers_mut();
 
-        let mut header_names: Vec<HeaderName> = Vec::new();
         for (key, val) in headers {
             let header_value = HeaderValue::from_str(&val)?;
             let header_name: HeaderName = key.parse()?;
-            header_names.push(header_name.clone());
             req_headers.insert(header_name, header_value);
         }
 
@@ -432,51 +546,34 @@ impl WebSocketClientInner {
             .port_u16()
             .unwrap_or_else(|| if scheme == "wss" { 443 } else { 80 });
 
-        // 检查是否启用代理（默认不启用）
-        let use_proxy = env::var("WEBSOCKET_PROXY_ENABLED")
-            .map(|v| v == "true")
-            .unwrap_or(false);
+        // =========================
+        // ❗ 强制使用代理
+        // =========================
+        let proxy_addr = env::var("WEBSOCKET_PROXY_ADDR").map_err(|_| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "WEBSOCKET_PROXY_ADDR not set",
+            ))
+        })?;
 
-        let addr = format!("{host}:{port}");
+        log::info!("Connecting via proxy: {}", proxy_addr);
 
-        // 使用代理或直接连接
-        let stream = if use_proxy {
-            // 获取代理服务器地址，默认为 localhost:8888
-            let proxy_addr =
-                env::var("WEBSOCKET_PROXY_ADDR").unwrap_or_else(|_| "localhost:8888".to_string());
-
-            log::info!("Connecting to WebSocket via proxy: {}", proxy_addr);
-
-            // 连接到代理服务器
-            let proxy_stream = tokio::net::TcpStream::connect(&proxy_addr)
-                .await
-                .map_err(|e| {
-                    Error::Io(std::io::Error::new(
-                        e.kind(),
-                        format!("Failed to connect to proxy {}: {}", proxy_addr, e),
-                    ))
-                })?;
-
-            // 通过代理建立到目标服务器的隧道
-            Self::connect_via_proxy(proxy_stream, host, port).await?
-        } else {
-            // 直接连接
-            let stream = tokio::net::TcpStream::connect(&addr).await.map_err(|e| {
+        let proxy_stream = tokio::net::TcpStream::connect(&proxy_addr)
+            .await
+            .map_err(|e| {
                 Error::Io(std::io::Error::new(
                     e.kind(),
-                    format!("Failed to connect to {}: {}", addr, e),
+                    format!("Failed to connect to proxy {}: {}", proxy_addr, e),
                 ))
             })?;
 
-            if let Err(e) = stream.set_nodelay(true) {
-                log::warn!("Failed to enable TCP_NODELAY for socket client: {e:?}");
-            }
-            stream
-        };
+        // 👇 建立 CONNECT 隧道
+        let stream = Self::connect_via_proxy(proxy_stream, host, port).await?;
 
-        // Wrap stream appropriately based on scheme
+        // =========================
+        // TLS（只看 wss）
+        // =========================
         let maybe_tls_stream = if scheme == "wss" {
-            // Build TLS config with webpki roots
             let mut root_store = rustls::RootCertStore::empty();
             root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
@@ -485,6 +582,7 @@ impl WebSocketClientInner {
                 .with_no_client_auth();
 
             let tls_connector = TlsConnector::from(std::sync::Arc::new(config));
+
             let domain =
                 rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|e| {
                     Error::Io(std::io::Error::new(
@@ -494,12 +592,15 @@ impl WebSocketClientInner {
                 })?;
 
             let tls_stream = tls_connector.connect(domain, stream).await?;
+
             MaybeTlsStream::Rustls(tls_stream)
         } else {
             MaybeTlsStream::Plain(stream)
         };
 
-        // Use client_async with the stream (plain or TLS)
+        // =========================
+        // WebSocket 握手
+        // =========================
         client_async(request, maybe_tls_stream)
             .await
             .map(|resp| resp.0.split())
