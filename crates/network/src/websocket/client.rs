@@ -379,7 +379,7 @@ impl WebSocketClientInner {
                 .with_root_certificates(root_store)
                 .with_no_client_auth();
 
-            let tls_connector = TlsConnector::from(std::sync::Arc::new(config));
+            let tls_connector = TlsConnector::from(Arc::new(config));
             let domain =
                 rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|e| {
                     Error::Io(std::io::Error::new(
