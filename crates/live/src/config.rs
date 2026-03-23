@@ -159,6 +159,8 @@ pub struct LiveExecEngineConfig {
     pub graceful_shutdown_on_error: bool,
     /// The queue size for the engine's internal queue buffers.
     pub qsize: u32,
+    /// todo mqtrader add snapshot configs
+    pub exe_engine_config: ExecutionEngineConfig,
 }
 
 impl Default for LiveExecEngineConfig {
@@ -196,13 +198,14 @@ impl Default for LiveExecEngineConfig {
             own_books_audit_interval_secs: None,
             graceful_shutdown_on_error: false,
             qsize: 100_000,
+            exe_engine_config: ExecutionEngineConfig::default(),
         }
     }
 }
 
 impl From<LiveExecEngineConfig> for ExecutionEngineConfig {
-    fn from(_config: LiveExecEngineConfig) -> Self {
-        Self::default()
+    fn from(config: LiveExecEngineConfig) -> Self {
+        config.exe_engine_config
     }
 }
 
