@@ -35,7 +35,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     let is_demo = true;
 
-
     // let environment = Environment::Sandbox;
     let environment = Environment::Live;
     let trader_id = TraderId::from("TESTER-001");

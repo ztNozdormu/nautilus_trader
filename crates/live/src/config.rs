@@ -159,8 +159,6 @@ pub struct LiveExecEngineConfig {
     pub graceful_shutdown_on_error: bool,
     /// The queue size for the engine's internal queue buffers.
     pub qsize: u32,
-    /// todo mqtrader add snapshot configs
-    pub exe_engine_config: ExecutionEngineConfig,
 }
 
 impl Default for LiveExecEngineConfig {
