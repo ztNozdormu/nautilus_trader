@@ -18,7 +18,7 @@ use nautilus_model::identifiers::ClientId;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for `ExecutionEngine` instances.
-#[derive(Debug, Clone , Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionEngineConfig {
     /// If the cache should be loaded on initialization.
     #[serde(default = "default_true")]

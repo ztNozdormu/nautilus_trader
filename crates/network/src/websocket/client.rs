@@ -549,8 +549,8 @@ impl WebSocketClientInner {
         // =========================
         // ❗ 强制使用代理
         // =========================
-        let proxy_addr = env::var("WEBSOCKET_PROXY_ADDR")
-            .unwrap_or_else(|_| "localhost:8888".to_string());
+        let proxy_addr =
+            env::var("WEBSOCKET_PROXY_ADDR").unwrap_or_else(|_| "localhost:8888".to_string());
 
         log::info!("Connecting via proxy: {}", proxy_addr);
 

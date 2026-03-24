@@ -44,8 +44,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let instrument_id = InstrumentId::from("SOL-USDT-SWAP.OKX");
 
     let data_config = OKXDataClientConfig {
-        api_key: api_key.clone(),        // Will use 'OKX_API_KEY' env var
-        api_secret: api_secret.clone() ,     // Will use 'OKX_API_SECRET' env var
+        api_key: api_key.clone(),               // Will use 'OKX_API_KEY' env var
+        api_secret: api_secret.clone(),         // Will use 'OKX_API_SECRET' env var
         api_passphrase: api_passphrase.clone(), // Will use 'OKX_API_PASSPHRASE' env var
         instrument_types: vec![OKXInstrumentType::Spot, OKXInstrumentType::Swap],
         http_proxy_url: Some("http://localhost:8888".to_string()),
