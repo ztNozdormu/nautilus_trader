@@ -198,17 +198,15 @@ impl Default for LiveExecEngineConfig {
             own_books_audit_interval_secs: None,
             graceful_shutdown_on_error: false,
             qsize: 100_000,
-            exe_engine_config: ExecutionEngineConfig::default(),
         }
     }
 }
 
 impl From<LiveExecEngineConfig> for ExecutionEngineConfig {
-    fn from(config: LiveExecEngineConfig) -> Self {
-        config.exe_engine_config
+    fn from(_config: LiveExecEngineConfig) -> Self {
+        Self::default()
     }
 }
-
 /// Configuration for live client message routing.
 #[cfg_attr(
     feature = "python",

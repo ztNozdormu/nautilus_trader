@@ -294,7 +294,7 @@ impl WebSocketClientInner {
 
         let use_proxy = env::var("WEBSOCKET_PROXY_ENABLED")
             .map(|v| v == "true")
-            .unwrap_or(false);
+            .unwrap_or(true);
 
         if use_proxy {
             // 👇 注意这里必须 .await
@@ -549,12 +549,8 @@ impl WebSocketClientInner {
         // =========================
         // ❗ 强制使用代理
         // =========================
-        let proxy_addr = env::var("WEBSOCKET_PROXY_ADDR").map_err(|_| {
-            Error::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "WEBSOCKET_PROXY_ADDR not set",
-            ))
-        })?;
+        let proxy_addr = env::var("WEBSOCKET_PROXY_ADDR")
+            .unwrap_or_else(|_| "localhost:8888".to_string());
 
         log::info!("Connecting via proxy: {}", proxy_addr);
 

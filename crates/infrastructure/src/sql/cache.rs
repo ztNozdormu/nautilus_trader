@@ -17,6 +17,7 @@ use std::{collections::VecDeque, ops::ControlFlow, pin::Pin, time::Duration};
 
 use ahash::AHashMap;
 use bytes::Bytes;
+use log::info;
 use nautilus_common::{
     cache::database::{CacheDatabaseAdapter, CacheMap},
     live::get_runtime,
@@ -70,6 +71,7 @@ pub enum DatabaseQuery {
     AddInstrument(InstrumentAny),
     AddOrder(OrderAny, Option<ClientId>, bool),
     AddOrderSnapshot(OrderSnapshot),
+    AddPosition(Position),
     AddPositionSnapshot(PositionSnapshot),
     AddAccount(AccountAny, bool),
     AddSignal(Signal),
@@ -668,7 +670,12 @@ impl CacheDatabaseAdapter for PostgresCacheDatabase {
     }
 
     fn add_position(&self, position: &Position) -> anyhow::Result<()> {
-        todo!()
+        let query = DatabaseQuery::AddPosition(position.to_owned());
+        self.tx.send(query).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to send query add_position_snapshot to database message handler: {e}"
+            )
+        })
     }
 
     fn add_position_snapshot(&self, snapshot: &PositionSnapshot) -> anyhow::Result<()> {
@@ -953,6 +960,7 @@ impl CacheDatabaseAdapter for PostgresCacheDatabase {
     }
 
     fn update_position(&self, position: &Position) -> anyhow::Result<()> {
+        info!("position: {:?}", position);
         todo!()
     }
 
@@ -1121,6 +1129,9 @@ async fn drain_buffer(pool: &PgPool, buffer: &mut VecDeque<DatabaseQuery>) {
             },
             DatabaseQuery::AddOrderSnapshot(snapshot) => {
                 DatabaseQueries::add_order_snapshot(pool, snapshot).await
+            }
+            DatabaseQuery::AddPosition(position) => {
+                DatabaseQueries::add_position(pool, position).await
             }
             DatabaseQuery::AddPositionSnapshot(snapshot) => {
                 DatabaseQueries::add_position_snapshot(pool, snapshot).await

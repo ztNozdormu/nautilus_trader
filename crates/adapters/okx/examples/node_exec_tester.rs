@@ -33,31 +33,38 @@ use nautilus_testkit::testers::{ExecTester, ExecTesterConfig};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
+    let is_demo = true;
 
+
+    // let environment = Environment::Sandbox;
     let environment = Environment::Live;
     let trader_id = TraderId::from("TESTER-001");
     let account_id = AccountId::from("OKX-001");
     let node_name = "OKX-EXEC-TESTER-001".to_string();
     let client_id = ClientId::new("OKX");
-    let instrument_id = InstrumentId::from("ETH-USDT-SWAP.OKX");
+    let instrument_id = InstrumentId::from("SOL-USDT-SWAP.OKX");
 
     let data_config = OKXDataClientConfig {
-        api_key: None,        // Will use 'OKX_API_KEY' env var
-        api_secret: None,     // Will use 'OKX_API_SECRET' env var
-        api_passphrase: None, // Will use 'OKX_API_PASSPHRASE' env var
+        api_key: api_key.clone(),        // Will use 'OKX_API_KEY' env var
+        api_secret: api_secret.clone() ,     // Will use 'OKX_API_SECRET' env var
+        api_passphrase: api_passphrase.clone(), // Will use 'OKX_API_PASSPHRASE' env var
         instrument_types: vec![OKXInstrumentType::Spot, OKXInstrumentType::Swap],
-        is_demo: false,
+        http_proxy_url: Some("http://localhost:8888".to_string()),
+        ws_proxy_url: Some("ws://localhost:8888".to_string()),
+        is_demo,
         ..Default::default()
     };
 
     let exec_config = OKXExecClientConfig {
         trader_id,
         account_id,
-        api_key: None,        // Will use 'OKX_API_KEY' env var
-        api_secret: None,     // Will use 'OKX_API_SECRET' env var
-        api_passphrase: None, // Will use 'OKX_API_PASSPHRASE' env var
+        api_key,        // Will use 'OKX_API_KEY' env var
+        api_secret,     // Will use 'OKX_API_SECRET' env var
+        api_passphrase, // Will use 'OKX_API_PASSPHRASE' env var
         instrument_types: vec![OKXInstrumentType::Spot, OKXInstrumentType::Swap],
-        is_demo: false,
+        is_demo,
+        http_proxy_url: Some("http://localhost:8888".to_string()),
+        ws_proxy_url: Some("ws://localhost:8888".to_string()),
         ..Default::default()
     };
 
